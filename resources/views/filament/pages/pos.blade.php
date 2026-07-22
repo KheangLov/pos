@@ -45,8 +45,12 @@
         },
         get total() {
             return this.subtotal + this.tax;
+        },
+        clearCart() {
+            this.cart = [];
         }
-    }">
+    }"
+    @clear-cart.window="clearCart()">
         {{-- Left: Product Catalog --}}
         <div class="flex-1 flex flex-col bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
             {{-- Header/Categories --}}
@@ -145,6 +149,7 @@
                 </div>
                 
                 <button 
+                    @click="$wire.checkout(cart)"
                     :disabled="cart.length === 0"
                     class="w-full mt-4 py-3.5 px-4 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg shadow-primary-500/30 transition-all active:scale-95 flex items-center justify-center gap-2">
                     <x-heroicon-o-credit-card class="w-6 h-6" />

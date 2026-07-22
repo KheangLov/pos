@@ -1,4 +1,5 @@
 <x-filament-panels::page>
+    @vite('resources/js/app.js')
     <div class="h-[calc(100vh-12rem)]" x-data="{
         orders: [
             { id: 101, table: 'Table 4', time: '12:05 PM', items: [{name: 'Espresso', qty: 2}, {name: 'Croissant', qty: 1}], status: 'pending' },
@@ -8,6 +9,16 @@
         setStatus(id, status) {
             let order = this.orders.find(o => o.id === id);
             if(order) order.status = status;
+        },
+        init() {
+            setTimeout(() => {
+                if (window.Echo) {
+                    window.Echo.channel('kds')
+                        .listen('OrderCreated', (e) => {
+                            this.orders.push(e.orderData);
+                        });
+                }
+            }, 500);
         }
     }">
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 h-full overflow-y-auto custom-scrollbar p-2">

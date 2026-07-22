@@ -14,4 +14,28 @@ class Pos extends Page
     protected static ?int $navigationSort = 1;
 
     protected string $view = 'filament.pages.pos';
+
+    public function checkout(array $cart)
+    {
+        if (empty($cart)) {
+            return;
+        }
+
+        $orderData = [
+            'id' => rand(1000, 9999),
+            'table' => 'Counter',
+            'time' => now()->format('h:i A'),
+            'items' => collect($cart)->map(fn($item) => ['name' => $item['name'], 'qty' => $item['qty']])->toArray(),
+            'status' => 'pending'
+        ];
+
+        event(new \App\Events\OrderCreated($orderData));
+
+        \Filament\Notifications\Notification::make()
+            ->title('Order Placed Successfully!')
+            ->success()
+            ->send();
+
+        $this->dispatch('clear-cart');
+    }
 }

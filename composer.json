@@ -10,6 +10,7 @@
         "filament/filament": "^5.7",
         "jeroen-g/explorer": "^4.6",
         "laravel/framework": "^13.8",
+        "laravel/reverb": "*",
         "laravel/scout": "^11.3",
         "laravel/tinker": "^3.0",
         "spatie/laravel-permission": "^8.3"

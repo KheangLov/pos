@@ -18,7 +18,9 @@ class FloorPlanResource extends Resource
 {
     protected static ?string $model = FloorPlan::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedMap;
+
+    protected static \UnitEnum|string|null $navigationGroup = 'Establishment';
 
     public static function form(Schema $schema): Schema
     {

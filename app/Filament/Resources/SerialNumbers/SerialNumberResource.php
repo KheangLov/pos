@@ -18,7 +18,9 @@ class SerialNumberResource extends Resource
 {
     protected static ?string $model = SerialNumber::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedQrCode;
+
+    protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
 
     public static function form(Schema $schema): Schema
     {
@@ -44,5 +46,21 @@ class SerialNumberResource extends Resource
             'create' => CreateSerialNumber::route('/create'),
             'edit' => EditSerialNumber::route('/{record}/edit'),
         ];
+    }
+
+    /**
+     * Serial tracking only makes sense for businesses selling individually
+     * trackable goods (see Company::usesSerialNumbers()) — a coffee shop or
+     * restaurant has no use for it. Combined with, not instead of, the
+     * existing view_serial_number permission check (SerialNumberPolicy) —
+     * business_type narrows who the feature applies to at all, it isn't a
+     * substitute for the role-based check that already denies Cashier/Kitchen.
+     * Filament's navigation builder already calls canAccess() (→ canViewAny())
+     * before rendering the sidebar link, so this alone also hides it there —
+     * no separate shouldRegisterNavigation() override needed.
+     */
+    public static function canViewAny(): bool
+    {
+        return (auth()->user()?->company?->usesSerialNumbers() ?? false) && parent::canViewAny();
     }
 }

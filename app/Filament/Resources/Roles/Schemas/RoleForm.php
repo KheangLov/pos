@@ -10,7 +10,8 @@ class RoleForm
     {
         return $schema
             ->components([
-                //
+                \Filament\Forms\Components\TextInput::make('name')->required(),
+                \Filament\Forms\Components\TextInput::make('guard_name')->required()
             ]);
     }
 }

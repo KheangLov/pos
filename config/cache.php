@@ -131,6 +131,8 @@ return [
     |
     */
 
-    'serializable_classes' => false,
+    // The product-grid cache stores Eloquent collections (app-controlled data
+    // only, never user input), so object unserialization is enabled.
+    'serializable_classes' => true,
 
 ];

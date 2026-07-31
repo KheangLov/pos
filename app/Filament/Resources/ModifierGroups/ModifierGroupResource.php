@@ -18,7 +18,9 @@ class ModifierGroupResource extends Resource
 {
     protected static ?string $model = ModifierGroup::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleGroup;
+
+    protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
 
     public static function form(Schema $schema): Schema
     {

@@ -3,23 +3,39 @@
 namespace Database\Seeders;
 
 use App\Models\User;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // User::factory(10)->create();
+        // Search indexing runs separately via scout:import after seeding
+        config(['scout.driver' => 'null']);
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        Model::unguard();
+
+        $this->call([
+            RolePermissionSeeder::class,
+            BrewHavenSeeder::class,
+            TechHubSeeder::class,
         ]);
+
+        // Super admin with access to everything (company 1 / branch 1 as home base)
+        $admin = User::create([
+            'name' => 'System Admin',
+            'email' => 'admin@pos.test',
+            'password' => bcrypt('password'),
+            'email_verified_at' => now(),
+            'company_id' => 1,
+            'branch_id' => 1,
+        ]);
+        $admin->assignRole('Admin');
+
+        $this->call([
+            SalesHistorySeeder::class,
+        ]);
+
+        Model::reguard();
     }
 }

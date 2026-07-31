@@ -1,0 +1,149 @@
+# Production image for Omni POS.
+#
+# Unlike compose.yaml (which bind-mounts the working tree so edits are live),
+# this bakes the application into the image. Nothing readable is left sitting
+# on the customer's filesystem, dev tooling and demo seeders never make it in,
+# and the code inside the container is immutable — which is also why opcache
+# runs with validate_timestamps=0 here.
+#
+# Build with scripts/build-release.ps1, not by hand.
+
+# ---------------------------------------------------------------------------
+# Stage 1 — PHP dependencies, production only
+# ---------------------------------------------------------------------------
+FROM php:8.5-cli-bookworm AS vendor
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensions /usr/local/bin/
+
+# Only what composer needs to resolve platform requirements.
+RUN install-php-extensions pdo_pgsql zip intl gd bcmath
+
+WORKDIR /app
+
+COPY composer.json composer.lock ./
+
+# Dependencies first, without running scripts or building the autoloader —
+# the application source isn't here yet, so package discovery would fail.
+RUN composer install \
+        --no-dev \
+        --no-scripts \
+        --no-autoloader \
+        --no-interaction \
+        --prefer-dist
+
+COPY . .
+
+# .dockerignore strips the contents of the storage tree (local logs, sessions,
+# compiled views), which means Docker never creates the directories either.
+# Laravel's view compiler refuses to boot without storage/framework/views, and
+# package discovery below boots the framework — so recreate the skeleton first.
+#
+# Autoloader is optimised but NOT --classmap-authoritative: authoritative drops
+# the PSR-4 filesystem fallback entirely, which turns any class the classmap
+# missed into a fatal at a customer site rather than a slow lookup here.
+RUN mkdir -p \
+        storage/app/public \
+        storage/framework/cache/data \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/logs \
+        bootstrap/cache \
+    && composer dump-autoload --no-dev --optimize \
+    && composer run-script post-autoload-dump --no-dev
+
+# ---------------------------------------------------------------------------
+# Stage 2 — frontend assets
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS assets
+
+WORKDIR /app
+
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci
+
+# Tailwind scans app/Filament and resources/views (see the @source directives
+# in resources/css/filament/admin/theme.css), and the Filament theme imports
+# CSS straight out of vendor/ — so the asset build needs all three.
+COPY vite.config.js ./
+COPY resources ./resources
+COPY app ./app
+COPY --from=vendor /app/vendor ./vendor
+
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Stage 3 — runtime
+# ---------------------------------------------------------------------------
+FROM php:8.5-cli-bookworm AS runtime
+
+COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensions /usr/local/bin/
+
+RUN install-php-extensions \
+        pdo_pgsql \
+        pgsql \
+        redis \
+        swoole \
+        gd \
+        zip \
+        intl \
+        bcmath \
+        exif \
+        pcntl \
+        sockets \
+        opcache \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/prod/php.ini /usr/local/etc/php/conf.d/99-omnipos.ini
+
+# Runs unprivileged. Octane binds :80 inside the container only; the published
+# port on the host is set in compose.prod.yaml.
+RUN useradd --uid 1000 --create-home --shell /bin/bash app
+
+WORKDIR /var/www/html
+
+COPY --from=vendor --chown=app:app /app /var/www/html
+COPY --from=assets --chown=app:app /app/public/build /var/www/html/public/build
+
+# Everything below is stripped from the shipped image:
+#   - demo seeders and factories (fictional shops in a real customer's DB)
+#   - the vendor-side licence tooling (issuing keys is not the customer's job)
+#   - tests, dev scripts, installer sources, project notes
+RUN rm -rf \
+        /var/www/html/database/seeders/BrewHavenSeeder.php \
+        /var/www/html/database/seeders/TechHubSeeder.php \
+        /var/www/html/database/seeders/SalesHistorySeeder.php \
+        /var/www/html/database/seeders/DatabaseSeeder.php \
+        /var/www/html/database/factories \
+        /var/www/html/app/Console/Commands/Vendor \
+        /var/www/html/app/Console/Commands/EnsureSeeded.php \
+        /var/www/html/tests \
+        /var/www/html/phpunit.xml \
+        /var/www/html/installer \
+        /var/www/html/docker/release \
+        /var/www/html/README.md \
+        /var/www/html/.env.example \
+        /var/www/html/scripts \
+        /var/www/html/Dockerfile.prod \
+        /var/www/html/compose.yaml \
+        /var/www/html/compose.prod.yaml \
+        /var/www/html/start-prod.bat \
+        /var/www/html/stop-prod.bat \
+    && find /var/www/html -maxdepth 1 -name '*_prompt.md' -delete \
+    && rm -rf /var/www/html/storage/logs/* /var/www/html/storage/framework/views/*
+
+COPY --chown=app:app docker/prod/entrypoint.sh /usr/local/bin/entrypoint
+RUN chmod +x /usr/local/bin/entrypoint
+
+USER app
+
+EXPOSE 80
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=6 \
+    CMD curl -sf http://localhost/up || exit 1
+
+ENTRYPOINT ["entrypoint"]
+CMD ["php", "artisan", "octane:start", "--server=swoole", "--host=0.0.0.0", "--port=80", "--workers=4", "--task-workers=1"]

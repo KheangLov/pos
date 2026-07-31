@@ -1,0 +1,157 @@
+# Production ("sealed appliance") stack for a customer site.
+#
+# Differences from compose.yaml that matter for keeping source off the
+# customer's disk:
+#   - the application is a built image, never a bind mount of the source tree
+#   - no vite service (assets are baked in at build time)
+#   - only the ports a browser actually needs are published; Postgres, Redis,
+#     Elasticsearch and the MinIO console stay on the internal network
+#
+# Usage: start-prod.bat, or
+#   docker compose -f compose.prod.yaml --env-file .env.production up -d
+
+x-app: &app
+    image: '${OMNIPOS_IMAGE:-omnipos}:${OMNIPOS_VERSION:-latest}'
+    env_file: [.env.production]
+    environment:
+        # Host hardware fingerprint for licence binding, supplied by
+        # start-prod.bat. Empty means the licence falls back to install-scoped
+        # binding (see config/license.php).
+        LICENSE_MACHINE_ID: '${LICENSE_MACHINE_ID:-}'
+    volumes:
+        - 'omnipos-storage:/var/www/html/storage'
+    networks: [omnipos]
+    restart: unless-stopped
+    security_opt:
+        - 'no-new-privileges:true'
+
+services:
+    app:
+        <<: *app
+        environment:
+            LICENSE_MACHINE_ID: '${LICENSE_MACHINE_ID:-}'
+            # Only this service migrates; the others would race it on boot.
+            RUN_MIGRATIONS: 'true'
+            SHOW_LICENSE_STATUS: 'true'
+        ports:
+            - '${APP_PORT:-8000}:80'
+        depends_on:
+            pgsql: {condition: service_healthy}
+            redis: {condition: service_healthy}
+            elasticsearch: {condition: service_healthy}
+
+    reverb:
+        <<: *app
+        command: ['php', 'artisan', 'reverb:start', '--host=0.0.0.0', '--port=8080']
+        # Published because customer phones connect to it directly for live
+        # eMenu order tracking.
+        ports:
+            - '${REVERB_PORT:-8080}:8080'
+        healthcheck:
+            test: ['CMD-SHELL', 'curl -s http://localhost:8080 -o /dev/null || exit 1']
+            interval: 15s
+            retries: 6
+            start_period: 30s
+            timeout: 5s
+        depends_on:
+            app: {condition: service_started}
+            redis: {condition: service_healthy}
+
+    queue:
+        <<: *app
+        command: ['php', 'artisan', 'queue:work', 'redis', '--tries=3', '--backoff=5', '--timeout=90', '--max-time=3600']
+        healthcheck:
+            disable: true
+        depends_on:
+            app: {condition: service_started}
+            redis: {condition: service_healthy}
+            elasticsearch: {condition: service_healthy}
+
+    scheduler:
+        <<: *app
+        command: ['php', 'artisan', 'schedule:work']
+        healthcheck:
+            disable: true
+        depends_on:
+            app: {condition: service_started}
+
+    pgsql:
+        image: 'postgres:18-alpine'
+        # No published port: nothing outside the compose network talks to it.
+        environment:
+            POSTGRES_DB: '${DB_DATABASE}'
+            POSTGRES_USER: '${DB_USERNAME}'
+            POSTGRES_PASSWORD: '${DB_PASSWORD}'
+        volumes:
+            - 'omnipos-pgsql:/var/lib/postgresql'
+        networks: [omnipos]
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD', 'pg_isready', '-q', '-d', '${DB_DATABASE}', '-U', '${DB_USERNAME}']
+            interval: 10s
+            retries: 5
+            timeout: 5s
+
+    redis:
+        image: 'redis:alpine'
+        command: ['redis-server', '--appendonly', 'yes']
+        volumes:
+            - 'omnipos-redis:/data'
+        networks: [omnipos]
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 10s
+            retries: 5
+            timeout: 5s
+
+    elasticsearch:
+        # v9 to match the elasticsearch/elasticsearch PHP SDK major version.
+        image: 'elasticsearch:9.1.3'
+        environment:
+            - discovery.type=single-node
+            - xpack.security.enabled=false
+            - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
+        volumes:
+            - 'omnipos-elasticsearch:/usr/share/elasticsearch/data'
+        networks: [omnipos]
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD-SHELL', "curl -sf 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+            interval: 10s
+            retries: 10
+            start_period: 40s
+            timeout: 10s
+
+    minio:
+        image: 'minio/minio:latest'
+        command: 'server /data --console-address ":9001"'
+        environment:
+            MINIO_ROOT_USER: '${MINIO_ROOT_USER}'
+            MINIO_ROOT_PASSWORD: '${MINIO_ROOT_PASSWORD}'
+        # The API port is published because browsers load product images
+        # straight from it. The console (9001) deliberately is not — it is an
+        # admin UI guarded only by the root credentials.
+        ports:
+            - '${MINIO_PORT:-9000}:9000'
+        volumes:
+            - 'omnipos-minio:/data'
+        networks: [omnipos]
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+            interval: 10s
+            retries: 5
+            start_period: 10s
+            timeout: 5s
+
+networks:
+    omnipos:
+        driver: bridge
+
+volumes:
+    omnipos-storage: {driver: local}
+    omnipos-pgsql: {driver: local}
+    omnipos-redis: {driver: local}
+    omnipos-elasticsearch: {driver: local}
+    omnipos-minio: {driver: local}

@@ -1,0 +1,66 @@
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@source '../../../../app/Filament';
+@source '../../../../resources/views/filament';
+
+/* Scrollbars stay functional (wheel/touch/keyboard), just not drawn. */
+* {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+    display: none;
+}
+
+/*
+ * The sidebar and main content otherwise render as nearly the same color
+ * (in dark mode the sidebar is transparent on desktop and blends fully into
+ * the body), which makes the panel hard to read at a glance.
+ */
+.fi-sidebar {
+    @apply bg-white dark:bg-gray-900 dark:lg:bg-gray-900;
+}
+
+.fi-main-ctn {
+    @apply bg-gray-100 dark:bg-gray-950;
+}
+
+/*
+ * Kiosk mode for terminal-style pages (POS): hides the sidebar, topbar and
+ * page header so only the page content fills the screen. Toggled by adding
+ * .pos-kiosk to <html> (see pos.blade.php).
+ *
+ * Important: .fi-page-header-main-ctn is NOT just the header - Filament
+ * nests .fi-page-main (the actual page content, incl. #pos-terminal) inside
+ * it too. Hiding that container previously took the whole terminal out with
+ * it (display:none on an ancestor removes descendants from rendering even
+ * though #pos-terminal is position:fixed), leaving only a black screen.
+ * Target .fi-header specifically instead.
+ */
+html.pos-kiosk .fi-sidebar,
+html.pos-kiosk .fi-topbar-ctn,
+html.pos-kiosk .fi-header,
+html.pos-kiosk .fi-layout-sidebar-toggle-btn-ctn {
+    @apply hidden;
+}
+
+html.pos-kiosk .fi-main {
+    @apply max-w-full px-2 py-2;
+}
+
+html.pos-kiosk .fi-main-ctn {
+    @apply min-h-dvh;
+}
+
+/*
+ * Filament's page content only gets real height via its own flex/grid chain
+ * assuming the header is present (measured elsewhere) - hiding the header
+ * collapses that chain to 0. Taking the terminal out of flow with a fixed
+ * position sidesteps it entirely instead of fighting Filament's layout CSS.
+ */
+html.pos-kiosk #pos-terminal {
+    @apply fixed inset-2 bg-gray-100 dark:bg-gray-950;
+    height: auto;
+    z-index: 40;
+}

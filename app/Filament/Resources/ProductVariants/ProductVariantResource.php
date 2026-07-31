@@ -18,7 +18,9 @@ class ProductVariantResource extends Resource
 {
     protected static ?string $model = ProductVariant::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSwatch;
+
+    protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
 
     public static function form(Schema $schema): Schema
     {

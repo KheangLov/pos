@@ -60,6 +60,21 @@ return [
             'report' => false,
         ],
 
+        // Self-hosted S3-compatible bucket (MinIO container) used for product,
+        // category, and company image uploads. See app:ensure-minio-bucket.
+        'minio' => [
+            'driver' => 's3',
+            'key' => env('MINIO_ROOT_USER', 'minioadmin'),
+            'secret' => env('MINIO_ROOT_PASSWORD', 'minioadmin'),
+            'region' => 'us-east-1',
+            'bucket' => env('MINIO_BUCKET', 'pos-images'),
+            'url' => env('MINIO_URL', 'http://localhost:9000/'.env('MINIO_BUCKET', 'pos-images')),
+            'endpoint' => env('MINIO_ENDPOINT', 'http://minio:9000'),
+            'use_path_style_endpoint' => true,
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*

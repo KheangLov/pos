@@ -1,0 +1,167 @@
+{
+    "companies": [
+        "id",
+        "name",
+        "email",
+        "phone",
+        "address",
+        "logo_url",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "branches": [
+        "id",
+        "company_id",
+        "name",
+        "email",
+        "phone",
+        "address",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "categories": [
+        "id",
+        "company_id",
+        "name",
+        "slug",
+        "description",
+        "image_url",
+        "is_active",
+        "sort_order",
+        "created_at",
+        "updated_at"
+    ],
+    "products": [
+        "id",
+        "company_id",
+        "category_id",
+        "name",
+        "slug",
+        "description",
+        "image_url",
+        "base_price",
+        "cost_price",
+        "sku",
+        "barcode",
+        "is_serialized",
+        "warranty_period",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "product_variants": [
+        "id",
+        "product_id",
+        "name",
+        "additional_price",
+        "sku",
+        "barcode",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "modifiers": [
+        "id",
+        "modifier_group_id",
+        "name",
+        "price",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "modifier_groups": [
+        "id",
+        "company_id",
+        "name",
+        "selection_type",
+        "min_selections",
+        "max_selections",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "modifier_factors": [
+        "id",
+        "company_id",
+        "name",
+        "multiplier",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "serial_numbers": [
+        "id",
+        "product_id",
+        "product_variant_id",
+        "branch_id",
+        "serial_number",
+        "status",
+        "warranty_end_date",
+        "created_at",
+        "updated_at"
+    ],
+    "stock_transactions": [
+        "id",
+        "branch_id",
+        "product_id",
+        "product_variant_id",
+        "quantity",
+        "type",
+        "reference_type",
+        "reference_id",
+        "notes",
+        "created_at",
+        "updated_at"
+    ],
+    "tables": [
+        "id",
+        "floor_plan_id",
+        "name",
+        "capacity",
+        "shape",
+        "position_x",
+        "position_y",
+        "width",
+        "height",
+        "status",
+        "created_at",
+        "updated_at",
+        "uuid"
+    ],
+    "floor_plans": [
+        "id",
+        "branch_id",
+        "name",
+        "is_active",
+        "created_at",
+        "updated_at"
+    ],
+    "users": [
+        "id",
+        "name",
+        "email",
+        "email_verified_at",
+        "password",
+        "remember_token",
+        "created_at",
+        "updated_at",
+        "company_id",
+        "branch_id"
+    ],
+    "roles": [
+        "id",
+        "name",
+        "guard_name",
+        "created_at",
+        "updated_at"
+    ],
+    "permissions": [
+        "id",
+        "name",
+        "guard_name",
+        "created_at",
+        "updated_at"
+    ]
+}

@@ -18,7 +18,9 @@ class TableResource extends Resource
 {
     protected static ?string $model = Table1::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTableCells;
+
+    protected static \UnitEnum|string|null $navigationGroup = 'Establishment';
 
     public static function form(Schema $schema): Schema
     {

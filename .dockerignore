@@ -1,0 +1,68 @@
+# Build context hygiene for Dockerfile.prod.
+#
+# Anything listed here never reaches the Docker daemon, so it can't end up in
+# an image layer by accident. `.git` is the important one: a repo copy in a
+# layer hands over the full development history even if the working tree was
+# cleaned up.
+
+.git
+.gitattributes
+.gitignore
+.github
+.claude
+.editorconfig
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output are produced inside the image, not copied in,
+# so host-built copies (wrong platform, dev-only packages) can't leak in.
+node_modules
+vendor
+public/build
+public/hot
+public/storage
+
+# Local runtime state
+storage/logs
+storage/framework/cache/data
+storage/framework/sessions
+storage/framework/views
+storage/framework/testing
+storage/app/public
+storage/pail
+storage/*.key
+storage/octane-server-state.json
+storage/swoole_http.log
+
+# Previously built releases. Without this the last release tarball (hundreds
+# of MB) gets copied into the next image — and because dist/ does not exist on
+# a first build, the problem only appears from the second build onwards.
+dist
+
+# Development-only tooling and notes that should never ship
+tests
+phpunit.xml
+installer
+docker/release
+*.md
+!README.md
+dump_schema.php
+dump_schema2.php
+fix_groups.php
+fix_relations.php
+generate_policies.php
+populate_forms.php
+populate_tables.php
+update_groups.php
+schemas.json
+_ide_helper.php
+.phpunit.result.cache
+.phpunit.cache
+auth.json
+
+# Host-only launchers (the production stack uses start-prod.bat / compose)
+start.bat
+stop.bat
+enable-autostart.bat
+disable-autostart.bat

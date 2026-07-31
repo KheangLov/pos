@@ -2,6 +2,8 @@
 
 namespace App\Filament\Resources\Tables\Schemas;
 
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Schema;
 
 class TableForm
@@ -10,7 +12,22 @@ class TableForm
     {
         return $schema
             ->components([
-                //
+                Select::make('floor_plan_id')->relationship('floorPlan', 'name')->searchable()->preload()->required(),
+                TextInput::make('name')->required(),
+                TextInput::make('capacity')->numeric(),
+                Select::make('shape')
+                    ->options(['round' => 'Round', 'rectangle' => 'Rectangle'])
+                    ->searchable()
+                    ->required(),
+                TextInput::make('position_x')->required(),
+                TextInput::make('position_y')->required(),
+                TextInput::make('width')->required(),
+                TextInput::make('height')->required(),
+                Select::make('status')
+                    ->options(['available' => 'Available', 'occupied' => 'Occupied'])
+                    ->searchable()
+                    ->required(),
+                TextInput::make('uuid')->required(),
             ]);
     }
 }

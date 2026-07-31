@@ -4,26 +4,153 @@ services:
             context: './vendor/laravel/sail/runtimes/8.5'
             dockerfile: Dockerfile
             args:
-                WWWGROUP: '${WWWGROUP}'
+                WWWGROUP: '${WWWGROUP:-1000}'
         image: 'sail-8.5/app'
         extra_hosts:
             - 'host.docker.internal:host-gateway'
         ports:
             - '${APP_PORT:-80}:80'
-            - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
         environment:
-            WWWUSER: '${WWWUSER}'
+            WWWUSER: '${WWWUSER:-1000}'
             LARAVEL_SAIL: 1
             XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
             XDEBUG_CONFIG: '${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}'
             IGNITION_LOCAL_SITES_PATH: '${PWD}'
+            # Replaces the image's default `php artisan serve` (Sail's dev-server
+            # workers don't share OPcache SHM cleanly on this Windows bind mount,
+            # causing intermittent multi-second stalls). Octane+Swoole keeps
+            # long-lived workers with the framework already booted instead.
+            # --workers/--task-workers: without these Octane defaults to one
+            # of each per CPU core (24 on this Docker VM = 48 idle processes,
+            # ~4GB RAM) and every worker separately warms its own in-process
+            # caches on its first request, which reads as random slow loads
+            # until all of them have been hit once. This app doesn't use
+            # Octane's async task dispatching, hence task-workers=1 (minimum).
+            SUPERVISOR_PHP_COMMAND: '/usr/bin/php /var/www/html/artisan octane:start --server=swoole --host=0.0.0.0 --port=80 --workers=4 --task-workers=1'
+        volumes:
+            - '.:/var/www/html'
+            - './docker/php/99-performance.ini:/etc/php/8.5/cli/conf.d/99-performance.ini:ro'
+        networks:
+            - sail
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD-SHELL', 'curl -sf http://localhost/up || exit 1']
+            interval: 10s
+            retries: 6
+            start_period: 30s
+            timeout: 5s
+        depends_on:
+            pgsql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            elasticsearch:
+                condition: service_healthy
+
+    reverb:
+        build:
+            context: './vendor/laravel/sail/runtimes/8.5'
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP:-1000}'
+        image: 'sail-8.5/app'
+        command: ['php', 'artisan', 'reverb:start', '--host=0.0.0.0', '--port=8080']
+        ports:
+            - '${REVERB_PORT:-8080}:8080'
+        environment:
+            WWWUSER: '${WWWUSER:-1000}'
+            LARAVEL_SAIL: 1
+        volumes:
+            - '.:/var/www/html'
+            - './docker/php/99-performance.ini:/etc/php/8.5/cli/conf.d/99-performance.ini:ro'
+        networks:
+            - sail
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD-SHELL', 'curl -s http://localhost:8080 -o /dev/null || exit 1']
+            interval: 10s
+            retries: 6
+            start_period: 20s
+            timeout: 5s
+        depends_on:
+            pgsql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+
+    queue:
+        build:
+            context: './vendor/laravel/sail/runtimes/8.5'
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP:-1000}'
+        image: 'sail-8.5/app'
+        command: ['php', 'artisan', 'queue:work', 'redis', '--tries=3', '--backoff=5', '--timeout=90']
+        environment:
+            WWWUSER: '${WWWUSER:-1000}'
+            LARAVEL_SAIL: 1
+        volumes:
+            - '.:/var/www/html'
+            - './docker/php/99-performance.ini:/etc/php/8.5/cli/conf.d/99-performance.ini:ro'
+        networks:
+            - sail
+        restart: unless-stopped
+        depends_on:
+            pgsql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            elasticsearch:
+                condition: service_healthy
+
+    scheduler:
+        build:
+            context: './vendor/laravel/sail/runtimes/8.5'
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP:-1000}'
+        image: 'sail-8.5/app'
+        command: ['php', 'artisan', 'schedule:work']
+        environment:
+            WWWUSER: '${WWWUSER:-1000}'
+            LARAVEL_SAIL: 1
+        volumes:
+            - '.:/var/www/html'
+            - './docker/php/99-performance.ini:/etc/php/8.5/cli/conf.d/99-performance.ini:ro'
+        networks:
+            - sail
+        restart: unless-stopped
+        depends_on:
+            pgsql:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+
+    vite:
+        build:
+            context: './vendor/laravel/sail/runtimes/8.5'
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP:-1000}'
+        image: 'sail-8.5/app'
+        # Bypass the Sail entrypoint (gosu sail) — the Windows bind mount is only
+        # writable by root inside the container, and npm writes temp files.
+        entrypoint: []
+        # Production build, not the dev server: builds once into public/build
+        # and exits. Laravel's @vite() directive serves the built manifest
+        # automatically once public/hot is gone (see start.bat).
+        command: ['npm', 'run', 'build']
+        environment:
+            WWWUSER: '${WWWUSER:-1000}'
+            LARAVEL_SAIL: 1
         volumes:
             - '.:/var/www/html'
         networks:
             - sail
+        restart: 'no'
         depends_on:
-            - pgsql
-            - redis
+            - laravel.test
+
     pgsql:
         image: 'postgres:18-alpine'
         ports:
@@ -38,6 +165,7 @@ services:
             - './vendor/laravel/sail/database/pgsql/create-testing-database.sql:/docker-entrypoint-initdb.d/10-create-testing-database.sql'
         networks:
             - sail
+        restart: unless-stopped
         healthcheck:
             test:
                 - CMD
@@ -47,8 +175,10 @@ services:
                 - '${DB_DATABASE}'
                 - '-U'
                 - '${DB_USERNAME}'
-            retries: 3
+            interval: 10s
+            retries: 5
             timeout: 5s
+
     redis:
         image: 'redis:alpine'
         ports:
@@ -57,15 +187,19 @@ services:
             - 'sail-redis:/data'
         networks:
             - sail
+        restart: unless-stopped
         healthcheck:
             test:
                 - CMD
                 - redis-cli
                 - ping
-            retries: 3
+            interval: 10s
+            retries: 5
             timeout: 5s
+
     elasticsearch:
-        image: 'elasticsearch:8.10.2'
+        # Must be v9 to match the elasticsearch/elasticsearch PHP SDK major version
+        image: 'elasticsearch:9.1.3'
         environment:
             - discovery.type=single-node
             - xpack.security.enabled=false
@@ -76,13 +210,45 @@ services:
             - sail
         volumes:
             - 'sail-elasticsearch:/usr/share/elasticsearch/data'
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD-SHELL', "curl -sf 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+            interval: 10s
+            retries: 10
+            start_period: 40s
+            timeout: 10s
+
+    minio:
+        image: 'minio/minio:latest'
+        command: 'server /data --console-address ":9001"'
+        ports:
+            - '${FORWARD_MINIO_PORT:-9000}:9000'
+            - '${FORWARD_MINIO_CONSOLE_PORT:-9001}:9001'
+        environment:
+            MINIO_ROOT_USER: '${MINIO_ROOT_USER:-minioadmin}'
+            MINIO_ROOT_PASSWORD: '${MINIO_ROOT_PASSWORD:-minioadmin}'
+        volumes:
+            - 'sail-minio:/data'
+        networks:
+            - sail
+        restart: unless-stopped
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+            interval: 10s
+            retries: 5
+            start_period: 10s
+            timeout: 5s
+
 networks:
     sail:
         driver: bridge
+
 volumes:
     sail-pgsql:
         driver: local
     sail-redis:
         driver: local
     sail-elasticsearch:
+        driver: local
+    sail-minio:
         driver: local

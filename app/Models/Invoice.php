@@ -5,8 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Spatie\Activitylog\Models\Concerns\LogsActivity;
-use Spatie\Activitylog\Support\LogOptions;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class Invoice extends Model
 {
@@ -19,7 +19,7 @@ class Invoice extends Model
         return LogOptions::defaults()
             ->logOnly(['status', 'subtotal', 'discount_total', 'tax_total', 'total'])
             ->logOnlyDirty()
-            ->dontLogEmptyChanges();
+            ->dontSubmitEmptyLogs();
     }
 
     protected function casts(): array
@@ -60,5 +60,22 @@ class Invoice extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class);
+    }
+
+    /**
+     * Moves a fully-paid invoice to 'paid'. Skipped once KDS has already
+     * moved it past that (completed) or it's dead (cancelled) - payment
+     * status trails fulfillment status in those cases, not the other way
+     * around.
+     */
+    public function syncPaidStatus(): void
+    {
+        if (in_array($this->status, ['completed', 'paid', 'cancelled'], true)) {
+            return;
+        }
+
+        if ($this->payments()->where('status', 'successful')->sum('amount') >= $this->total) {
+            $this->update(['status' => 'paid']);
+        }
     }
 }

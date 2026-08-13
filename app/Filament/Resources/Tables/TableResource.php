@@ -13,6 +13,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class TableResource extends Resource
 {
@@ -21,6 +22,15 @@ class TableResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTableCells;
 
     protected static \UnitEnum|string|null $navigationGroup = 'Establishment';
+
+    /**
+     * Table has no company_id of its own — scoped through floorPlan.branch.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->whereHas('floorPlan.branch', fn (Builder $query) => $query->where('company_id', auth()->user()->company_id));
+    }
 
     public static function form(Schema $schema): Schema
     {

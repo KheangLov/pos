@@ -9,6 +9,8 @@ use App\Models\Category;
 use App\Models\Invoice;
 use App\Models\OrderItem;
 use App\Models\OrderItemModifier;
+use App\Models\Payment;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\StockTransaction;
 use App\Models\Table;
@@ -16,6 +18,7 @@ use App\Models\User;
 use App\Services\ProductSearch;
 use App\Support\BuildsModifierGroupsPayload;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
@@ -33,6 +36,8 @@ class EMenu extends Component
     public array $cart = [];
 
     public float $total = 0;
+
+    public ?int $selectedPaymentMethod = null;
 
     // Modifier picker state - kept server-side (Livewire) rather than Alpine
     // to match the rest of this component's architecture.
@@ -252,6 +257,11 @@ class EMenu extends Component
             return;
         }
 
+        if (RateLimiter::tooManyAttempts('emenu-checkout:'.request()->ip(), 20)) {
+            return;
+        }
+        RateLimiter::hit('emenu-checkout:'.request()->ip(), 60);
+
         $branchId = $this->table->floorPlan->branch_id;
 
         // Re-price everything server-side from the database
@@ -338,6 +348,24 @@ class EMenu extends Component
 
             $this->table->update(['status' => 'occupied']);
 
+            if ($this->selectedPaymentMethod) {
+                $method = PaymentMethod::where('company_id', $this->companyId)
+                    ->where('is_active', true)
+                    ->where(function ($query) use ($branchId) {
+                        $query->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                    })
+                    ->find($this->selectedPaymentMethod);
+                if ($method) {
+                    Payment::create([
+                        'invoice_id' => $invoice->id,
+                        'payment_method_id' => $method->id,
+                        'method' => $method->name,
+                        'amount' => $invoice->total,
+                        'status' => 'pending',
+                    ]);
+                }
+            }
+
             return $invoice;
         });
 
@@ -385,6 +413,13 @@ class EMenu extends Component
                 $this->search,
                 $this->selectedCategory,
             ),
+            'paymentMethods' => PaymentMethod::query()
+                ->where('company_id', $this->companyId)
+                ->where('is_active', true)
+                ->where(function ($query) {
+                    $query->whereNull('branch_id')->orWhere('branch_id', $this->table->floorPlan->branch_id);
+                })
+                ->get(),
         ]);
     }
 }

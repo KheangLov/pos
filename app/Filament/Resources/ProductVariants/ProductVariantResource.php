@@ -13,6 +13,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class ProductVariantResource extends Resource
 {
@@ -21,6 +22,15 @@ class ProductVariantResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedSwatch;
 
     protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
+
+    /**
+     * ProductVariant has no company_id of its own — scoped through product.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->whereHas('product', fn (Builder $query) => $query->where('company_id', auth()->user()->company_id));
+    }
 
     public static function form(Schema $schema): Schema
     {

@@ -2,6 +2,9 @@
 
 namespace App\Filament\Resources\ModifierFactors\Schemas;
 
+use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 
 class ModifierFactorForm
@@ -10,10 +13,10 @@ class ModifierFactorForm
     {
         return $schema
             ->components([
-                \Filament\Forms\Components\Select::make('company_id')->relationship('company', 'name')->searchable()->preload()->required(),
-                \Filament\Forms\Components\TextInput::make('name')->required(),
-                \Filament\Forms\Components\TextInput::make('multiplier')->required(),
-                \Filament\Forms\Components\Toggle::make('is_active')->required()
+                Hidden::make('company_id')->default(fn () => auth()->user()->company_id),
+                TextInput::make('name')->required(),
+                TextInput::make('multiplier')->required(),
+                Toggle::make('is_active')->required(),
             ]);
     }
 }

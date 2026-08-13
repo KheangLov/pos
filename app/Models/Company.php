@@ -3,16 +3,27 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
-use Spatie\Activitylog\Models\Concerns\LogsActivity;
-use Spatie\Activitylog\Support\LogOptions;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
-#[Fillable(['name', 'business_type', 'email', 'phone', 'address', 'logo_url', 'is_active'])]
+#[Fillable(['name', 'business_type', 'email', 'phone', 'address', 'logo_url', 'is_active', 'requires_2fa', 'ai_assistant_enabled', 'anthropic_api_key'])]
+#[Hidden(['anthropic_api_key'])]
 class Company extends Model
 {
     use LogsActivity;
+
+    protected function casts(): array
+    {
+        return [
+            'requires_2fa' => 'boolean',
+            'ai_assistant_enabled' => 'boolean',
+            'anthropic_api_key' => 'encrypted',
+        ];
+    }
 
     /**
      * Single source of truth for the business-type options — used by
@@ -28,6 +39,7 @@ class Company extends Model
             'restaurant' => 'Restaurant',
             'pub' => 'Pub',
             'bar' => 'Bar',
+            'clothes_shop' => 'Clothes Shop',
             'computer_phone_shop' => 'Computer / Phone Shop',
         ];
     }
@@ -45,7 +57,9 @@ class Company extends Model
 
     public function getActivitylogOptions(): LogOptions
     {
-        return LogOptions::defaults()->logFillable()->logOnlyDirty()->dontLogEmptyChanges();
+        // anthropic_api_key is a live API credential - never write it into
+        // the audit trail, same reasoning as PaymentMethod::bakong_token.
+        return LogOptions::defaults()->logFillable()->logExcept(['anthropic_api_key'])->logOnlyDirty()->dontSubmitEmptyLogs();
     }
 
     public function branches(): HasMany
@@ -56,6 +70,11 @@ class Company extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    public function paymentMethods(): HasMany
+    {
+        return $this->hasMany(PaymentMethod::class);
     }
 
     /**

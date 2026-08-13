@@ -12,7 +12,7 @@ class TableForm
     {
         return $schema
             ->components([
-                Select::make('floor_plan_id')->relationship('floorPlan', 'name')->searchable()->preload()->required(),
+                Select::make('floor_plan_id')->relationship('floorPlan', 'name', fn ($query) => $query->whereHas('branch', fn ($q) => $q->where('company_id', auth()->user()->company_id)))->searchable()->preload()->required(),
                 TextInput::make('name')->required(),
                 TextInput::make('capacity')->numeric(),
                 Select::make('shape')

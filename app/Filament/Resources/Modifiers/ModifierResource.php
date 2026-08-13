@@ -13,6 +13,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class ModifierResource extends Resource
 {
@@ -21,6 +22,15 @@ class ModifierResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedAdjustmentsHorizontal;
 
     protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
+
+    /**
+     * Modifier has no company_id of its own — scoped through modifierGroup.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->whereHas('modifierGroup', fn (Builder $query) => $query->where('company_id', auth()->user()->company_id));
+    }
 
     public static function form(Schema $schema): Schema
     {

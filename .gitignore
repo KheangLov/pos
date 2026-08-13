@@ -21,6 +21,15 @@
 /public/storage
 /storage/*.key
 /storage/pail
+
+# Locally-generated TLS CA/cert - environment-specific (bakes in the host's
+# LAN IP) and the CA's private key must never leave this machine. san.cnf is
+# regenerated from the template embedded in generate-and-trust.ps1 itself.
+/docker/certs/*.pem
+/docker/certs/*.cer
+/docker/certs/*.csr
+/docker/certs/*.srl
+/docker/certs/san.cnf
 /vendor
 _ide_helper.php
 Homestead.json

@@ -37,6 +37,7 @@ class InvoiceResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         return parent::getEloquentQuery()
+            ->with(['orderItems.product', 'orderItems.productVariant', 'orderItems.modifiers', 'payments'])
             ->whereHas('branch', fn (Builder $query) => $query->where('company_id', auth()->user()->company_id));
     }
 

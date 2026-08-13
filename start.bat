@@ -12,7 +12,9 @@ call :ensure_env
 call :ensure_docker
 if errorlevel 1 exit /b 1
 
-echo Starting containers - app, reverb, queue, scheduler, postgres, redis, elasticsearch, minio (vite builds assets once and exits)...
+call :ensure_certs
+
+echo Starting containers - app, reverb, queue, scheduler, caddy, postgres, redis, elasticsearch, minio (vite builds assets once and exits)...
 docker compose up -d
 if errorlevel 1 (
     echo.
@@ -38,6 +40,11 @@ echo Caching config/routes/views for faster local performance...
 docker compose exec -T laravel.test php artisan optimize
 docker compose exec -T laravel.test php artisan filament:optimize
 
+REM Must run AFTER optimize: blade-icons' own icons:cache step (bundled into
+REM optimize) under-counts icons on the Windows bind mount, which 500s any page
+REM using an affected icon. See App\Console\Commands\CacheIcons.
+docker compose exec -T laravel.test php artisan app:icons-cache
+
 echo.
 echo ================================================
 echo   Omni POS is running!
@@ -45,6 +52,10 @@ echo.
 echo   App:      http://localhost:8000
 echo   Admin:    http://localhost:8000/admin
 echo   Login:    admin@pos.test / password
+echo.
+echo   For phones (eMenu QR codes, camera barcode scanning): one-time
+echo   setup via docker\certs\generate-and-trust.ps1 - see README.md's
+echo   "Phone setup" section.
 echo.
 echo   Stop it any time by running stop.bat
 echo ================================================
@@ -62,6 +73,18 @@ REM needs real generation, done below once the app container is healthy.
 if not exist ".env" (
     echo Creating .env from .env.example...
     copy /y ".env.example" ".env" >nul
+)
+exit /b 0
+
+:ensure_certs
+REM caddy (TLS termination for phones - Phase 7) needs a cert to exist
+REM before its container can start at all. Generates one scoped to
+REM localhost/127.0.0.1/this machine's LAN IP if missing; safe to re-run
+REM any time the LAN IP changes. Does NOT install the CA into any trust
+REM store - Windows requires a manual click for that, see README.md.
+if not exist "docker\certs\server-cert.pem" (
+    echo Generating a local TLS certificate for phone/LAN access...
+    powershell -ExecutionPolicy Bypass -File "docker\certs\generate-and-trust.ps1"
 )
 exit /b 0
 

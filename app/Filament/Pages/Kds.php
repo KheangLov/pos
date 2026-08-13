@@ -10,13 +10,22 @@ use Illuminate\Database\Eloquent\Collection;
 
 class Kds extends Page
 {
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-fire';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-fire';
+
     protected static ?string $navigationLabel = 'Kitchen Display (KDS)';
+
     protected static ?string $title = 'Kitchen Display System';
+
     protected static ?string $slug = 'kds';
+
     protected static ?int $navigationSort = 2;
 
     protected string $view = 'filament.pages.kds';
+
+    public static function canAccess(): bool
+    {
+        return auth()->user()?->can('update_order_item') ?? false;
+    }
 
     public static function getNavigationBadge(): ?string
     {

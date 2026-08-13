@@ -12,9 +12,9 @@ class SerialNumberForm
     {
         return $schema
             ->components([
-                Select::make('product_id')->relationship('product', 'name')->searchable()->preload()->required(),
-                Select::make('product_variant_id')->relationship('productVariant', 'name')->searchable()->preload()->required(),
-                Select::make('branch_id')->relationship('branch', 'name')->searchable()->preload()->required(),
+                Select::make('product_id')->relationship('product', 'name', fn ($query) => $query->where('company_id', auth()->user()->company_id))->searchable()->preload()->required(),
+                Select::make('product_variant_id')->relationship('productVariant', 'name', fn ($query) => $query->whereHas('product', fn ($q) => $q->where('company_id', auth()->user()->company_id)))->searchable()->preload()->required(),
+                Select::make('branch_id')->relationship('branch', 'name', fn ($query) => $query->where('company_id', auth()->user()->company_id))->searchable()->preload()->required(),
                 TextInput::make('serial_number')->required(),
                 Select::make('status')
                     ->options(['in_stock' => 'In stock', 'sold' => 'Sold'])

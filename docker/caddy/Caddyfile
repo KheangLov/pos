@@ -1,0 +1,15 @@
+{
+	# We supply our own locally-trusted cert below - never let Caddy attempt
+	# ACME/Let's Encrypt, which would fail anyway for a private LAN IP.
+	auto_https off
+}
+
+:443 {
+	tls /certs/server-cert.pem /certs/server-key.pem
+	reverse_proxy laravel.test:80
+}
+
+:8443 {
+	tls /certs/server-cert.pem /certs/server-key.pem
+	reverse_proxy reverb:8080
+}

@@ -13,6 +13,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class SerialNumberResource extends Resource
 {
@@ -21,6 +22,17 @@ class SerialNumberResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedQrCode;
 
     protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
+
+    /**
+     * SerialNumber has no company_id of its own — scoped through branch
+     * (product_id would work equally well, both are non-nullable; branch
+     * matches the convention used by StockTransaction/Shift).
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->whereHas('branch', fn (Builder $query) => $query->where('company_id', auth()->user()->company_id));
+    }
 
     public static function form(Schema $schema): Schema
     {

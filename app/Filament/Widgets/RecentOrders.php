@@ -18,7 +18,7 @@ class RecentOrders extends TableWidget
     public function table(Table $table): Table
     {
         return $table
-            ->query(fn () => DashboardFilters::scopeInvoices(Invoice::query(), $this->pageFilters)->latest()->limit(5))
+            ->query(fn () => DashboardFilters::scopeInvoices(Invoice::query()->with('table'), $this->pageFilters)->latest()->limit(5))
             ->columns([
                 TextColumn::make('id')->label('Order ID')->sortable(),
                 TextColumn::make('table.name')->label('Table')->sortable(),

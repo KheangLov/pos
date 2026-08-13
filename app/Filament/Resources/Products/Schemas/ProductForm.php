@@ -4,7 +4,9 @@ namespace App\Filament\Resources\Products\Schemas;
 
 use App\Models\Company;
 use App\Support\ImageOptimizer;
+use Filament\Actions\Action;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -18,13 +20,8 @@ class ProductForm
     {
         return $schema
             ->components([
-                Select::make('company_id')
-                    ->relationship('company', 'name')
-                    ->searchable()
-                    ->preload()
-                    ->live()
-                    ->required(),
-                Select::make('category_id')->relationship('category', 'name')->searchable()->preload()->required(),
+                Hidden::make('company_id')->default(fn () => auth()->user()->company_id),
+                Select::make('category_id')->relationship('category', 'name', fn ($query) => $query->where('company_id', auth()->user()->company_id))->searchable()->preload()->required(),
                 TextInput::make('name')->required(),
                 TextInput::make('slug')->required(),
                 Textarea::make('description')->columnSpanFull(),
@@ -37,7 +34,13 @@ class ProductForm
                 TextInput::make('base_price')->numeric()->prefix('$'),
                 TextInput::make('cost_price')->numeric()->prefix('$'),
                 TextInput::make('sku')->required(),
-                TextInput::make('barcode')->required(),
+                TextInput::make('barcode')
+                    ->required()
+                    ->suffixAction(
+                        Action::make('scanBarcode')
+                            ->icon('heroicon-o-camera')
+                            ->extraAttributes(['onclick' => "window.BarcodeScanner.open(code => \$wire.set('data.barcode', code))"]),
+                    ),
                 // Only shown for businesses that actually sell individually
                 // trackable goods (see Company::usesSerialNumbers()) — hidden
                 // for coffee shops, restaurants, etc. rather than asking every
@@ -51,7 +54,7 @@ class ProductForm
                     ->visible(fn (Get $get): bool => Company::find($get('company_id'))?->usesSerialNumbers() ?? false),
                 Toggle::make('is_active')->required(),
                 Select::make('modifierGroups')
-                    ->relationship('modifierGroups', 'name')
+                    ->relationship('modifierGroups', 'name', fn ($query) => $query->where('company_id', auth()->user()->company_id))
                     ->multiple()
                     ->preload()
                     ->searchable()

@@ -35,6 +35,10 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
                         Paid
                     </span>
+                @elseif ($this->pendingKhqrSvg)
+                    <span class="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                        Scan QR to pay
+                    </span>
                 @else
                     <span class="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full">
                         Pay at counter
@@ -143,16 +147,36 @@
                     </div>
                 </div>
             </div>
+            
+            @if($this->pendingKhqrSvg)
+                <!-- KHQR Payment -->
+                <div class="bg-white p-8 border-t border-stone-100 flex flex-col items-center justify-center">
+                    <h3 class="text-lg font-bold text-stone-900 mb-2">Scan to Pay</h3>
+                    <p class="text-sm text-stone-500 mb-6 text-center">Wait for our staff to confirm your payment after you scan.</p>
+                    
+                    <div class="bg-white p-3 rounded-2xl shadow-sm border border-stone-100 inline-block mb-4">
+                        {!! $this->pendingKhqrSvg !!}
+                    </div>
+                    
+                    <div class="text-2xl font-black text-amber-600">
+                        ${{ number_format($invoice->total, 2) }}
+                    </div>
+                </div>
+            @endif
         </div>
         
-        <div class="text-center">
+        <div class="text-center print:hidden flex items-center justify-center gap-6">
             @if($invoice->table && $invoice->table->uuid)
                 <a href="{{ route('emenu.table', ['uuid' => $invoice->table->uuid]) }}" class="inline-flex items-center gap-2 text-amber-600 hover:text-amber-800 font-semibold transition-colors">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                     Back to Menu
                 </a>
             @endif
+            <button type="button" onclick="window.print()" class="inline-flex items-center gap-2 text-stone-500 hover:text-stone-700 font-semibold transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                Print Receipt
+            </button>
         </div>
-        
+
     </div>
 </div>

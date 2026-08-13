@@ -13,6 +13,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class DiscountResource extends Resource
 {
@@ -21,6 +22,11 @@ class DiscountResource extends Resource
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedTag;
 
     protected static \UnitEnum|string|null $navigationGroup = 'Catalog';
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->where('company_id', auth()->user()->company_id);
+    }
 
     public static function form(Schema $schema): Schema
     {

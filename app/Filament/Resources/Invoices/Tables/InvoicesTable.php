@@ -2,7 +2,9 @@
 
 namespace App\Filament\Resources\Invoices\Tables;
 
+use App\Models\Invoice;
 use App\Support\TableFilters;
+use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -45,6 +47,13 @@ class InvoicesTable
                 TableFilters::dateRange(),
             ])
             ->recordActions([
+                Action::make('print')
+                    ->label('Print')
+                    ->icon('heroicon-o-printer')
+                    ->color('success')
+                    ->extraAttributes(fn (Invoice $record) => [
+                        'onclick' => 'printReceiptFrame(\''.route('invoices.receipt', $record).'\')',
+                    ]),
                 ViewAction::make(),
             ])
             ->toolbarActions([

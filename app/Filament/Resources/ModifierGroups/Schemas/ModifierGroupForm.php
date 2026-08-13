@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\ModifierGroups\Schemas;
 
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
@@ -13,7 +14,7 @@ class ModifierGroupForm
     {
         return $schema
             ->components([
-                Select::make('company_id')->relationship('company', 'name')->searchable()->preload()->required(),
+                Hidden::make('company_id')->default(fn () => auth()->user()->company_id),
                 TextInput::make('name')->required(),
                 Select::make('selection_type')
                     ->options(['single' => 'Single', 'multiple' => 'Multiple'])

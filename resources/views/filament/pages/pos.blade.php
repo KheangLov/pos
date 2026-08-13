@@ -40,7 +40,15 @@
         processing: false,
         picker: null,
         kiosk: false,
+        paymentMethods: {{ \Illuminate\Support\Js::from($paymentMethods) }},
+        methodId: null, // holds the ID of the selected PaymentMethod
+        qrModal: false,
+        qrSvg: '',
+        pendingPaymentsModal: false,
         init() {
+            if (this.paymentMethods.length > 0) {
+                this.methodId = this.paymentMethods[0].id;
+            }
             document.addEventListener('fullscreenchange', () => {
                 if (! document.fullscreenElement && this.kiosk) this.exitKiosk();
             });
@@ -61,9 +69,33 @@
             document.documentElement.classList.remove('pos-kiosk');
             if (document.fullscreenElement) document.exitFullscreen?.();
         },
+        get selectedMethod() {
+            return this.paymentMethods.find(m => m.id === this.methodId) ?? null;
+        },
+        async initiateCheckout() {
+            if (this.selectedMethod && this.selectedMethod.type === 'khqr') {
+                this.processing = true;
+                this.qrSvg = await this.$wire.generateKhqr(this.cart, this.methodId, this.selectedDiscountId);
+                this.processing = false;
+                if (this.qrSvg) {
+                    this.qrModal = true;
+                } else {
+                    alert('Could not generate QR code. Check Bakong Account configuration.');
+                }
+            } else {
+                this.checkout();
+            }
+        },
         checkout() {
             this.processing = true;
-            this.$wire.checkout(this.cart, this.method, this.selectedDiscountId).finally(() => { this.processing = false; });
+            this.qrModal = false;
+            this.$wire.checkout(this.cart, this.methodId, this.selectedDiscountId).finally(() => { this.processing = false; });
+        },
+        scanBarcode() {
+            window.BarcodeScanner.open((code) => {
+                this.search = code;
+                this.$wire.addFirstMatch();
+            });
         },
         // Entry point for both the product grid and the barcode-scan flow:
         // products with modifier groups open the picker first, plain
@@ -173,7 +205,8 @@
         },
     }"
     @clear-cart.window="clearCart()"
-    @pos-add-product.window="selectProduct($event.detail.product)">
+    @pos-add-product.window="selectProduct($event.detail.product)"
+    @print-receipt.window="printReceiptFrame($event.detail.url)">
         {{-- Kiosk toggle --}}
         <button
             type="button"
@@ -188,19 +221,28 @@
         <div class="flex-1 flex flex-col bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
             {{-- Search --}}
             <div class="p-4 border-b border-gray-200 dark:border-gray-800 space-y-3">
-                <div class="relative">
-                    <x-heroicon-o-magnifying-glass class="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                        type="search"
-                        wire:model.live.debounce.250ms="search"
-                        wire:keydown.enter.prevent="addFirstMatch"
-                        placeholder="Search products, scan barcode or SKU…"
-                        autofocus
-                        class="w-full pl-11 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-                    />
-                    <div wire:loading.flex wire:target="search, addFirstMatch" class="absolute right-3.5 top-1/2 -translate-y-1/2 items-center">
-                        <x-filament::loading-indicator class="w-4 h-4 text-primary-500" />
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <x-heroicon-o-magnifying-glass class="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                            type="search"
+                            wire:model.live.debounce.250ms="search"
+                            wire:keydown.enter.prevent="addFirstMatch"
+                            placeholder="Search products, scan barcode or SKU…"
+                            autofocus
+                            class="w-full pl-11 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                        />
+                        <div wire:loading.flex wire:target="search, addFirstMatch" class="absolute right-3.5 top-1/2 -translate-y-1/2 items-center">
+                            <x-filament::loading-indicator class="w-4 h-4 text-primary-500" />
+                        </div>
                     </div>
+                    <button
+                        type="button"
+                        @click="scanBarcode()"
+                        title="Scan with camera"
+                        class="shrink-0 w-11 flex items-center justify-center rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                        <x-heroicon-o-camera class="w-5 h-5" />
+                    </button>
                 </div>
 
                 {{-- Categories --}}
@@ -296,7 +338,19 @@
                     <x-heroicon-o-shopping-cart class="w-6 h-6 text-primary-500" />
                     Current Order
                 </h2>
-                <span class="bg-primary-100 text-primary-700 dark:bg-primary-900/50 dark:text-primary-400 text-xs font-bold px-2.5 py-1 rounded-full" x-text="cart.length + ' Items'"></span>
+                <div class="flex items-center gap-2">
+                    @if($pendingPayments->isNotEmpty())
+                        <button @click="pendingPaymentsModal = true" class="relative bg-amber-100 text-amber-700 hover:bg-amber-200 text-xs font-bold px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1 transition-colors">
+                            <span class="absolute -top-1 -right-1 flex h-3 w-3">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                            </span>
+                            <x-heroicon-o-bell-alert class="w-4 h-4" />
+                            {{ $pendingPayments->count() }} Pending
+                        </button>
+                    @endif
+                    <span class="bg-primary-100 text-primary-700 dark:bg-primary-900/50 dark:text-primary-400 text-xs font-bold px-2.5 py-1 rounded-full" x-text="cart.length + ' Items'"></span>
+                </div>
             </div>
 
             {{-- Cart Items --}}
@@ -369,25 +423,59 @@
                 </div>
 
                 {{-- Payment method --}}
-                <div class="grid grid-cols-3 gap-2 pt-1">
-                    <template x-for="m in ['cash', 'card', 'qr']" :key="m">
+                <div class="grid grid-cols-2 lg:grid-cols-3 gap-2 pt-1">
+                    <template x-if="paymentMethods.length === 0">
+                        <div class="col-span-full text-xs text-red-500 bg-red-50 p-2 rounded-lg">No payment methods configured.</div>
+                    </template>
+                    <template x-for="m in paymentMethods" :key="m.id">
                         <button
-                            @click="method = m"
-                            :class="method === m
+                            @click="methodId = m.id"
+                            :class="methodId === m.id
                                 ? 'bg-primary-600 text-white shadow'
                                 : 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'"
-                            class="py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors"
-                            x-text="m"></button>
+                            class="py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors flex items-center justify-center gap-1.5"
+                            >
+                            <x-heroicon-o-qr-code class="w-4 h-4" x-show="m.type === 'khqr'" x-cloak />
+                            <x-heroicon-o-banknotes class="w-4 h-4" x-show="m.type === 'cash'" x-cloak />
+                            <x-heroicon-o-credit-card class="w-4 h-4" x-show="m.type === 'card'" x-cloak />
+                            <span x-text="m.name"></span>
+                        </button>
                     </template>
                 </div>
 
                 <button
-                    @click="checkout()"
-                    :disabled="cart.length === 0 || processing"
+                    @click="initiateCheckout()"
+                    :disabled="cart.length === 0 || processing || !methodId"
                     class="w-full mt-2 py-3.5 px-4 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-wait text-white font-bold rounded-xl shadow-lg shadow-primary-500/30 transition-all active:scale-95 flex items-center justify-center gap-2">
-                    <x-heroicon-o-credit-card class="w-6 h-6" x-show="!processing" />
+                    <x-heroicon-o-check-circle class="w-6 h-6" x-show="!processing" />
                     <x-filament::loading-indicator class="w-6 h-6" x-show="processing" x-cloak />
-                    <span x-text="processing ? 'Processing…' : 'Checkout & Pay'"></span>
+                    <span x-text="processing ? 'Processing…' : ((selectedMethod && selectedMethod.type === 'khqr') ? 'Generate QR & Pay' : 'Checkout & Pay')"></span>
+                </button>
+            </div>
+        </div>
+
+        {{-- KHQR Modal --}}
+        <div x-show="qrModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center">
+            <div class="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" @click="qrModal = false"></div>
+            <div class="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center p-6" x-transition>
+                <div class="absolute top-3 right-3">
+                    <button @click="qrModal = false" class="text-gray-400 hover:text-gray-600 bg-gray-100 rounded-full p-1"><x-heroicon-o-x-mark class="w-5 h-5"/></button>
+                </div>
+                <div class="text-center mb-4">
+                    <h3 class="font-bold text-xl text-gray-900 dark:text-white">Scan to Pay</h3>
+                    <p class="text-sm text-gray-500">Wait for Telegram notification, then confirm.</p>
+                </div>
+                <div class="bg-white p-2 rounded-xl shadow-sm border border-gray-100 mb-6" x-html="qrSvg">
+                    {{-- SVG injected here --}}
+                </div>
+                <div class="w-full text-center text-2xl font-black text-primary-600 mb-6">
+                    $<span x-text="total.toFixed(2)"></span>
+                </div>
+                <button
+                    @click="checkout()"
+                    class="w-full py-4 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl shadow-lg shadow-green-500/30 transition-all active:scale-95 flex items-center justify-center gap-2">
+                    <x-heroicon-o-check-circle class="w-6 h-6" />
+                    <span>Confirm Payment Received</span>
                 </button>
             </div>
         </div>
@@ -486,6 +574,58 @@
                 </template>
             </div>
         </div>
+
+        {{-- Pending Payments Modal --}}
+        <div x-show="pendingPaymentsModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center">
+            <div class="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" @click="pendingPaymentsModal = false"></div>
+            <div class="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]" x-transition>
+                <div class="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                    <h3 class="font-bold text-lg text-gray-900 dark:text-white flex items-center gap-2">
+                        <x-heroicon-o-bell-alert class="w-5 h-5 text-amber-500" />
+                        Pending eMenu Payments
+                    </h3>
+                    <button @click="pendingPaymentsModal = false" class="text-gray-400 hover:text-gray-600 bg-white dark:bg-gray-700 rounded-full p-1 shadow-sm"><x-heroicon-o-x-mark class="w-5 h-5"/></button>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-4 bg-gray-50 dark:bg-gray-900">
+                    @if($pendingPayments->isEmpty())
+                        <div class="text-center py-8">
+                            <p class="text-gray-500">No pending payments.</p>
+                        </div>
+                    @else
+                        <div class="space-y-3">
+                            @foreach($pendingPayments as $payment)
+                                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 shadow-sm flex items-center justify-between">
+                                    <div>
+                                        <div class="flex items-center gap-2 mb-1">
+                                            <span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide">Table {{ $payment->invoice->table->name ?? 'N/A' }}</span>
+                                            <span class="text-xs text-gray-500">Inv #{{ $payment->invoice_id }}</span>
+                                        </div>
+                                        <div class="font-bold text-gray-900 dark:text-white">
+                                            ${{ number_format($payment->amount, 2) }} <span class="text-sm font-normal text-gray-500 ml-1">via {{ $payment->method }}</span>
+                                        </div>
+                                        <div class="text-xs text-gray-400 mt-1">
+                                            {{ $payment->created_at->diffForHumans() }}
+                                        </div>
+                                    </div>
+                                    <button
+                                        wire:click="confirmPayment({{ $payment->id }})"
+                                        wire:loading.attr="disabled"
+                                        wire:target="confirmPayment({{ $payment->id }})"
+                                        @click="setTimeout(() => { if({{ $pendingPayments->count() }} <= 1) pendingPaymentsModal = false; }, 500)"
+                                        class="shrink-0 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors flex items-center gap-2 text-sm disabled:opacity-50">
+                                        <x-heroicon-o-check-circle class="w-5 h-5" wire:loading.remove wire:target="confirmPayment({{ $payment->id }})" />
+                                        <x-filament::loading-indicator class="w-5 h-5" wire:loading wire:target="confirmPayment({{ $payment->id }})" />
+                                        Confirm
+                                    </button>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
+                </div>
+            </div>
+        </div>
+
     </div>
     @endif
 </x-filament-panels::page>

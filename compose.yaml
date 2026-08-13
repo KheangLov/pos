@@ -78,6 +78,28 @@ services:
             redis:
                 condition: service_healthy
 
+    # TLS termination for LAN access from phones - the ZXing camera scanner
+    # (Phase 6) and any real-device eMenu testing both need HTTPS, since
+    # browsers refuse camera access and Reverb refuses WSS-from-page-HTTPS on
+    # a plain-HTTP origin. laravel.test/reverb stay on plain HTTP internally;
+    # this just proxies to them with a cert covering localhost/127.0.0.1/LAN.
+    caddy:
+        image: 'caddy:2-alpine'
+        ports:
+            - '443:443'
+            - '8443:8443'
+        volumes:
+            - './docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro'
+            - './docker/certs:/certs:ro'
+        networks:
+            - sail
+        restart: unless-stopped
+        depends_on:
+            laravel.test:
+                condition: service_healthy
+            reverb:
+                condition: service_healthy
+
     queue:
         build:
             context: './vendor/laravel/sail/runtimes/8.5'

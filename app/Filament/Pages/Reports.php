@@ -30,6 +30,11 @@ class Reports extends Page implements HasTable
 
     protected string $view = 'filament.pages.reports';
 
+    public static function canAccess(): bool
+    {
+        return auth()->user()?->hasAnyRole(['Admin', 'Manager']) ?? false;
+    }
+
     public function table(Table $table): Table
     {
         return $table

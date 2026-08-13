@@ -12,6 +12,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class ShiftResource extends Resource
 {
@@ -22,6 +23,15 @@ class ShiftResource extends Resource
     protected static \UnitEnum|string|null $navigationGroup = 'Operations';
 
     protected static ?int $navigationSort = 1;
+
+    /**
+     * Shift has no company_id of its own — scoped through branch.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->whereHas('branch', fn (Builder $query) => $query->where('company_id', auth()->user()->company_id));
+    }
 
     public static function infolist(Schema $schema): Schema
     {

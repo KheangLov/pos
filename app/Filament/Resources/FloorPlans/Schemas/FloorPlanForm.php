@@ -2,6 +2,9 @@
 
 namespace App\Filament\Resources\FloorPlans\Schemas;
 
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 
 class FloorPlanForm
@@ -10,9 +13,9 @@ class FloorPlanForm
     {
         return $schema
             ->components([
-                \Filament\Forms\Components\Select::make('branch_id')->relationship('branch', 'name')->searchable()->preload()->required(),
-                \Filament\Forms\Components\TextInput::make('name')->required(),
-                \Filament\Forms\Components\Toggle::make('is_active')->required()
+                Select::make('branch_id')->relationship('branch', 'name', fn ($query) => $query->where('company_id', auth()->user()->company_id))->searchable()->preload()->required(),
+                TextInput::make('name')->required(),
+                Toggle::make('is_active')->required(),
             ]);
     }
 }

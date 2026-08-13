@@ -12,9 +12,12 @@ use App\Models\Invoice;
 use App\Models\OrderItem;
 use App\Models\OrderItemModifier;
 use App\Models\Payment;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Shift;
 use App\Models\StockTransaction;
+use App\Models\User;
+use App\Services\KhqrService;
 use App\Services\ProductSearch;
 use App\Support\BuildsModifierGroupsPayload;
 use Filament\Actions\Action;
@@ -38,6 +41,11 @@ class Pos extends Page
     protected static ?int $navigationSort = 1;
 
     protected string $view = 'filament.pages.pos';
+
+    public static function canAccess(): bool
+    {
+        return auth()->user()?->can('create_invoice') ?? false;
+    }
 
     public string $search = '';
 
@@ -182,10 +190,142 @@ class Pos extends Page
                 ->where('is_active', true)
                 ->orderBy('name')
                 ->get(['id', 'name', 'type', 'value']),
+            'paymentMethods' => PaymentMethod::query()
+                ->where('company_id', $user->company_id)
+                ->where('is_active', true)
+                ->where(function ($query) use ($user) {
+                    $query->whereNull('branch_id')->orWhere('branch_id', $user->branch_id);
+                })
+                ->get(),
+            'pendingPayments' => Payment::with('invoice.table')
+                ->where('status', 'pending')
+                ->whereHas('invoice', function ($query) use ($user) {
+                    $query->where('branch_id', $user->branch_id)
+                        ->whereDate('created_at', today());
+                })
+                ->get(),
         ];
     }
 
-    public function checkout(array $cart, string $method = 'cash', ?int $discountId = null): void
+    public function confirmPayment(int $paymentId): void
+    {
+        $payment = Payment::whereHas('invoice', fn ($query) => $query->where('branch_id', auth()->user()->branch_id))
+            ->find($paymentId);
+
+        if ($payment) {
+            $payment->update(['status' => 'successful']);
+
+            $payment->invoice->syncPaidStatus();
+
+            event(new PaymentReceived($payment));
+
+            Notification::make()
+                ->title('Payment #'.$payment->id.' confirmed!')
+                ->success()
+                ->send();
+        }
+    }
+
+    public function generateKhqr(array $cart, int $methodId, ?int $discountId = null): ?string
+    {
+        if (empty($cart)) {
+            return null;
+        }
+
+        $user = auth()->user();
+
+        $method = PaymentMethod::where('company_id', $user->company_id)
+            ->where('is_active', true)
+            ->where('type', 'khqr')
+            ->find($methodId);
+
+        if (! $method || ! $method->account_details) {
+            return null;
+        }
+
+        $pricing = $this->priceCart($cart, $user, $discountId);
+
+        if ($pricing['total'] <= 0) {
+            return null;
+        }
+
+        $service = app(KhqrService::class);
+        $khqr = $service->generateKhqr(
+            bakongId: $method->account_details,
+            amount: $pricing['total'],
+            currency: $method->currency ?? 'USD',
+            merchantName: $user->company->name,
+            city: 'Phnom Penh',
+            merchantId: $method->merchant_id,
+            acquiringBank: $method->acquiring_bank,
+        );
+
+        return $khqr ? $service->generateQrImage($khqr['qr']) : null;
+    }
+
+    /**
+     * Server-side pricing shared by checkout() and generateKhqr() - the
+     * client cart is only ever trusted for which product/variant/modifier
+     * ids and quantities were picked, never for prices or totals.
+     *
+     * @return array{lines: array, subtotal: float, discount_total: float, tax_total: float, total: float}
+     */
+    private function priceCart(array $cart, User $user, ?int $discountId): array
+    {
+        $products = Product::with(['variants', 'modifierGroups.modifiers.modifierFactor'])
+            ->where('company_id', $user->company_id)
+            ->whereIn('id', collect($cart)->pluck('id'))
+            ->get()
+            ->keyBy('id');
+
+        $discount = $discountId
+            ? Discount::where('company_id', $user->company_id)->where('is_active', true)->find($discountId)
+            : null;
+
+        $subtotal = 0.0;
+        $lines = [];
+
+        foreach ($cart as $line) {
+            $product = $products->get($line['id']);
+            if (! $product) {
+                continue;
+            }
+
+            $variant = isset($line['variant_id'])
+                ? $product->variants->firstWhere('id', $line['variant_id'])
+                : null;
+
+            $modifiers = $this->resolveValidModifiers($product, $line['modifiers'] ?? []);
+            $modifiersTotal = $modifiers->sum(fn ($m) => $m->effectivePrice());
+
+            $qty = max(1, (int) ($line['qty'] ?? 1));
+            $unitPrice = round((float) $product->base_price + (float) ($variant->additional_price ?? 0) + $modifiersTotal, 2);
+            $lineTotal = round($unitPrice * $qty, 2);
+            $subtotal += $lineTotal;
+
+            $lines[] = [
+                'product' => $product,
+                'variant' => $variant,
+                'modifiers' => $modifiers,
+                'qty' => $qty,
+                'unit_price' => $unitPrice,
+                'line_total' => $lineTotal,
+            ];
+        }
+
+        $discountTotal = $discount ? $discount->amountFor($subtotal) : 0.0;
+        $taxTotal = round(($subtotal - $discountTotal) * ($this->taxRate() / 100), 2);
+
+        return [
+            'lines' => $lines,
+            'subtotal' => round($subtotal, 2),
+            'discount_total' => $discountTotal,
+            'tax_total' => $taxTotal,
+            'total' => round($subtotal - $discountTotal + $taxTotal, 2),
+        ];
+    }
+
+    public function checkout(array $cart, ?int $methodId = null, ?int $discountId = null): void
     {
         if (empty($cart)) {
             return;
@@ -202,73 +342,33 @@ class Pos extends Page
         }
 
         $user = auth()->user();
-        $taxRate = $this->taxRate();
 
-        // Server-side pricing: never trust client-supplied amounts
-        $products = Product::with(['variants', 'modifierGroups.modifiers.modifierFactor'])
-            ->where('company_id', $user->company_id)
-            ->whereIn('id', collect($cart)->pluck('id'))
-            ->get()
-            ->keyBy('id');
-
-        // Server-side pricing again: resolve the discount from its id, never
-        // trust a client-supplied amount/percentage.
-        $discount = $discountId
-            ? Discount::where('company_id', $user->company_id)->where('is_active', true)->find($discountId)
+        // Never trust a client-supplied method name/type - resolve it from
+        // the company's own configured methods, same as the QR/pricing path.
+        $paymentMethod = $methodId
+            ? PaymentMethod::where('company_id', $user->company_id)->where('is_active', true)->find($methodId)
             : null;
 
-        $invoice = DB::transaction(function () use ($cart, $user, $shift, $products, $taxRate, $discount, $method) {
-            $subtotal = 0.0;
-            $lines = [];
+        $pricing = $this->priceCart($cart, $user, $discountId);
 
-            foreach ($cart as $line) {
-                $product = $products->get($line['id']);
-                if (! $product) {
-                    continue;
-                }
+        if ($pricing['lines'] === []) {
+            return;
+        }
 
-                $variant = isset($line['variant_id'])
-                    ? $product->variants->firstWhere('id', $line['variant_id'])
-                    : null;
-
-                $modifiers = $this->resolveValidModifiers($product, $line['modifiers'] ?? []);
-                $modifiersTotal = $modifiers->sum(fn ($m) => $m->effectivePrice());
-
-                $qty = max(1, (int) ($line['qty'] ?? 1));
-                $unitPrice = round((float) $product->base_price + (float) ($variant->additional_price ?? 0) + $modifiersTotal, 2);
-                $lineTotal = round($unitPrice * $qty, 2);
-                $subtotal += $lineTotal;
-
-                $lines[] = [
-                    'product' => $product,
-                    'variant' => $variant,
-                    'modifiers' => $modifiers,
-                    'qty' => $qty,
-                    'unit_price' => $unitPrice,
-                    'line_total' => $lineTotal,
-                ];
-            }
-
-            if ($lines === []) {
-                return null;
-            }
-
-            $discountTotal = $discount ? $discount->amountFor($subtotal) : 0.0;
-            $taxTotal = round(($subtotal - $discountTotal) * ($taxRate / 100), 2);
-
+        $invoice = DB::transaction(function () use ($user, $shift, $pricing, $paymentMethod) {
             $invoice = Invoice::create([
                 'branch_id' => $user->branch_id,
                 'user_id' => $user->id,
                 'shift_id' => $shift->id,
                 'table_id' => null,
                 'status' => 'pending', // paid up front; kitchen lifecycle: pending → preparing → ready → completed
-                'subtotal' => round($subtotal, 2),
-                'discount_total' => $discountTotal,
-                'tax_total' => $taxTotal,
-                'total' => round($subtotal - $discountTotal + $taxTotal, 2),
+                'subtotal' => $pricing['subtotal'],
+                'discount_total' => $pricing['discount_total'],
+                'tax_total' => $pricing['tax_total'],
+                'total' => $pricing['total'],
             ]);
 
-            foreach ($lines as $line) {
+            foreach ($pricing['lines'] as $line) {
                 $orderItem = OrderItem::create([
                     'invoice_id' => $invoice->id,
                     'product_id' => $line['product']->id,
@@ -299,19 +399,36 @@ class Pos extends Page
                 ]);
             }
 
+            // Re-derive the same QR here (deterministic from account+amount)
+            // purely to capture its md5 for later Bakong reconciliation -
+            // the customer already scanned the one shown by generateKhqr().
+            $khqrMd5 = null;
+            if ($paymentMethod?->type === 'khqr' && $paymentMethod->account_details) {
+                $khqr = app(KhqrService::class)->generateKhqr(
+                    bakongId: $paymentMethod->account_details,
+                    amount: $invoice->total,
+                    currency: $paymentMethod->currency ?? 'USD',
+                    merchantName: $user->company->name,
+                    city: 'Phnom Penh',
+                    merchantId: $paymentMethod->merchant_id,
+                    acquiringBank: $paymentMethod->acquiring_bank,
+                );
+                $khqrMd5 = $khqr['md5'] ?? null;
+            }
+
             $payment = Payment::create([
                 'invoice_id' => $invoice->id,
-                'method' => $method,
+                'payment_method_id' => $paymentMethod?->id,
+                'method' => $paymentMethod?->name ?? 'cash',
                 'amount' => $invoice->total,
                 'status' => 'successful',
+                'khqr_md5' => $khqrMd5,
             ]);
+
+            $invoice->syncPaidStatus();
 
             return [$invoice, $payment];
         });
-
-        if (! $invoice) {
-            return;
-        }
 
         [$invoice, $payment] = $invoice;
 
@@ -331,7 +448,7 @@ class Pos extends Page
         event(new PaymentReceived($payment));
 
         // Alert managers when a sale pushes any product below the reorder level
-        foreach ($products as $product) {
+        foreach (collect($pricing['lines'])->pluck('product')->unique('id') as $product) {
             $onHand = StockTransaction::onHand($user->branch_id, $product->id);
             if ($onHand <= StockTransaction::LOW_STOCK_THRESHOLD) {
                 event(new StockLow($product, $user->branch_id, $onHand));
@@ -344,6 +461,7 @@ class Pos extends Page
             ->send();
 
         $this->dispatch('clear-cart');
+        $this->dispatch('print-receipt', url: route('invoices.receipt', $invoice));
     }
 
     private function taxRate(): float

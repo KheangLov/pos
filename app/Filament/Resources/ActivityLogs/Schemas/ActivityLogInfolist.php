@@ -35,12 +35,27 @@ class ActivityLogInfolist
                     ->schema([
                         KeyValueEntry::make('new_values')
                             ->label('New values')
-                            ->state(fn (Activity $record) => (array) ($record->attribute_changes['attributes'] ?? [])),
+                            ->state(fn (Activity $record) => static::changes($record)['attributes'] ?? []),
                         KeyValueEntry::make('old_values')
                             ->label('Previous values')
-                            ->state(fn (Activity $record) => (array) ($record->attribute_changes['old'] ?? [])),
+                            ->state(fn (Activity $record) => static::changes($record)['old'] ?? []),
                     ])
-                    ->visible(fn (Activity $record) => filled($record->attribute_changes?->toArray())),
+                    ->visible(fn (Activity $record) => filled(static::changes($record))),
             ]);
+    }
+
+    /**
+     * Rows logged before spatie/laravel-activitylog was pinned to ^4.12 (2026-08-11) were
+     * written by a transiently-resolved 5.x install, which stores changes in the
+     * `attribute_changes` column instead of 4.x's `properties`. Read both so old audit
+     * history stays visible alongside everything logged from now on.
+     */
+    private static function changes(Activity $record): array
+    {
+        if (filled($record->properties)) {
+            return $record->properties->toArray();
+        }
+
+        return $record->attribute_changes ? (json_decode($record->attribute_changes, true) ?? []) : [];
     }
 }

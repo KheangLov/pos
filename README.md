@@ -118,15 +118,34 @@ To build it:
 
 | Service | URL |
 |---|---|
-| App | http://localhost:8000 |
+| App (this machine) | http://localhost:8000 |
+| App (LAN/phones, HTTPS) | https://\<your LAN IP\> |
 | Admin panel | http://localhost:8000/admin |
-| eMenu (per table) | http://localhost:8000/emenu/table/{uuid} |
-| Reverb (websockets) | ws://localhost:8080 |
+| eMenu (per table) | https://\<your LAN IP\>/emenu/table/{uuid} — QR codes use this automatically |
+| Reverb (websockets, internal) | ws://localhost:8080 |
+| Reverb (websockets, LAN/phones, WSS) | wss://\<your LAN IP\>:8443 |
 | Elasticsearch | http://localhost:9200 |
 | MinIO API | http://localhost:9000 |
 | MinIO console | http://localhost:9001 |
 | Postgres | localhost:5433 |
 | Redis | localhost:6380 |
+
+### Phone setup (camera scanning, eMenu QR codes)
+
+Two features need a phone to reach this machine over **HTTPS**, not plain `localhost`: the eMenu (a customer scans a table's QR code with their own phone) and the camera barcode/QR scanner in POS, the product form, and stock entry (browsers refuse camera access on a plain-HTTP origin). A `caddy` container terminates TLS for both the app and Reverb, using a certificate generated for `localhost`, `127.0.0.1`, and this machine's LAN IP.
+
+**One-time setup:**
+
+1. Run `docker\certs\generate-and-trust.ps1` (regenerate any time your LAN IP changes — routers can reassign it — or the cert expires). It prints the LAN IP it detected and writes `docker\certs\ca-cert.cer`.
+2. Trust the CA on **this machine**: double-click `docker\certs\ca-cert.cer` → Install Certificate → Current User → "Place all certificates in the following store" → Trusted Root Certification Authorities → Yes to the security warning. This can't be scripted — Windows requires that click for any root CA install, by design.
+3. Trust the same CA on **each phone** that will scan things:
+   - **Android**: copy `ca-cert.cer` to the phone (email, cloud drive, USB), then Settings → Security → "Install a certificate" (or "Encryption & credentials" → "Install a CA certificate") → select the file.
+   - **iOS**: AirDrop or email `ca-cert.cer` to the phone, open it (Settings will show "Profile Downloaded"), install it under Settings → General → VPN & Device Management, **then** separately enable full trust under Settings → General → About → Certificate Trust Settings — iOS installs a profile's cert but doesn't trust it for TLS until that second step.
+4. Restart Caddy so it's serving the certificate you just trusted: `docker compose restart caddy`.
+
+After that, scan a table's QR code (or open `https://<your LAN IP>/admin/pos` on the phone) — no certificate warning, camera scanning works.
+
+Everything above is generated locally and never leaves this machine except the one file (`ca-cert.cer`) you deliberately hand to your own phones — there's no external service involved.
 
 ### Troubleshooting
 

@@ -2,6 +2,9 @@
 
 namespace App\Filament\Resources\ProductVariants\Schemas;
 
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Schema;
 
 class ProductVariantForm
@@ -10,12 +13,12 @@ class ProductVariantForm
     {
         return $schema
             ->components([
-                \Filament\Forms\Components\Select::make('product_id')->relationship('product', 'name')->searchable()->preload()->required(),
-                \Filament\Forms\Components\TextInput::make('name')->required(),
-                \Filament\Forms\Components\TextInput::make('additional_price')->numeric()->prefix('$'),
-                \Filament\Forms\Components\TextInput::make('sku')->required(),
-                \Filament\Forms\Components\TextInput::make('barcode')->required(),
-                \Filament\Forms\Components\Toggle::make('is_active')->required()
+                Select::make('product_id')->relationship('product', 'name', fn ($query) => $query->where('company_id', auth()->user()->company_id))->searchable()->preload()->required(),
+                TextInput::make('name')->required(),
+                TextInput::make('additional_price')->numeric()->prefix('$'),
+                TextInput::make('sku')->required(),
+                TextInput::make('barcode')->required(),
+                Toggle::make('is_active')->required(),
             ]);
     }
 }

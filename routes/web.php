@@ -2,11 +2,22 @@
 
 use App\Livewire\EMenu;
 use App\Livewire\OrderTracking;
+use App\Models\Invoice;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('landing');
 });
 
-Route::get('/emenu/table/{uuid}', EMenu::class)->name('emenu.table');
-Route::get('/emenu/order/{invoice}', OrderTracking::class)->name('order.tracking');
+Route::middleware('throttle:60,1')->group(function () {
+    Route::get('/emenu/table/{uuid}', EMenu::class)->name('emenu.table');
+    Route::get('/emenu/order/{invoice}', OrderTracking::class)->name('order.tracking');
+});
+
+Route::get('/invoices/{invoice}/receipt', function (Invoice $invoice) {
+    abort_unless($invoice->branch->company_id === auth()->user()->company_id, 403);
+
+    $invoice->loadMissing(['orderItems.product', 'orderItems.productVariant', 'orderItems.modifiers', 'branch.company', 'payments', 'table']);
+
+    return view('invoices.receipt', compact('invoice'));
+})->name('invoices.receipt')->middleware('auth');

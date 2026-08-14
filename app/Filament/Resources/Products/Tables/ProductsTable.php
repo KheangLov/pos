@@ -52,7 +52,7 @@ class ProductsTable
                     ->badge()
                     ->color(fn (int $state): string => match (true) {
                         $state <= 0 => 'danger',
-                        $state <= StockTransaction::LOW_STOCK_THRESHOLD => 'warning',
+                        $state <= StockTransaction::lowStockThreshold() => 'warning',
                         default => 'success',
                     }),
                 TextColumn::make('sku')->searchable()->sortable(),

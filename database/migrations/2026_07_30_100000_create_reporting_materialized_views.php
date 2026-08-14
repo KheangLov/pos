@@ -26,8 +26,17 @@ use Illuminate\Support\Facades\DB;
  */
 return new class extends Migration
 {
+    /**
+     * Materialized views are Postgres-only. The suite runs on sqlite in-memory
+     * (phpunit.xml), where these would fail the migration; tests for the
+     * Reports/dashboard pages create their own aggregates instead.
+     */
     public function up(): void
     {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement(<<<'SQL'
             CREATE MATERIALIZED VIEW product_sales_daily AS
             SELECT
@@ -66,6 +75,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+
         DB::statement('DROP MATERIALIZED VIEW IF EXISTS product_sales_daily');
         DB::statement('DROP MATERIALIZED VIEW IF EXISTS invoice_daily_summary');
     }

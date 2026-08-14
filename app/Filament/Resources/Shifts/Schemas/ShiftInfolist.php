@@ -4,7 +4,6 @@ namespace App\Filament\Resources\Shifts\Schemas;
 
 use App\Models\Invoice;
 use App\Models\OrderItem;
-use App\Models\Payment;
 use App\Models\Shift;
 use Filament\Infolists\Components\RepeatableEntry;
 use Filament\Infolists\Components\TextEntry;
@@ -87,7 +86,7 @@ class ShiftInfolist
                                 ->money(),
                             TextEntry::make('qr_sales')
                                 ->label('QR sales')
-                                ->state(fn (Shift $record) => static::paymentTotal($record, 'qr'))
+                                ->state(fn (Shift $record) => static::paymentTotal($record, 'khqr'))
                                 ->money(),
                         ]),
                     ]),
@@ -111,15 +110,12 @@ class ShiftInfolist
 
     private static function cashSales(Shift $record): float
     {
-        return (float) static::paymentTotal($record, 'cash');
+        return $record->revenueForPaymentType('cash');
     }
 
-    private static function paymentTotal(Shift $record, string $method): float
+    private static function paymentTotal(Shift $record, string $type): float
     {
-        return (float) Payment::where('method', $method)
-            ->where('status', 'successful')
-            ->whereHas('invoice', fn ($q) => $q->where('shift_id', $record->id))
-            ->sum('amount');
+        return $record->revenueForPaymentType($type);
     }
 
     /**

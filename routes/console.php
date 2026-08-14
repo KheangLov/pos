@@ -26,3 +26,7 @@ if (class_exists('Laravel\Telescope\Telescope')) {
 // manual "Refresh now" action (see Reports.php) covers when that's not
 // enough — e.g. checking a report immediately after closing a shift.
 Schedule::command('app:refresh-reporting-views')->everyTwoMinutes();
+
+// P1-5: poll Bakong for confirmed KHQR payments. No-op while no payment
+// method carries a Bakong token (see app/Console/Commands/CheckKhqrPayments.php).
+Schedule::command('khqr:check-pending')->everyMinute()->withoutOverlapping();

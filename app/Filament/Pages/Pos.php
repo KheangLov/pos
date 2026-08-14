@@ -5,7 +5,9 @@ namespace App\Filament\Pages;
 use App\Events\OrderCreated;
 use App\Events\PaymentReceived;
 use App\Events\StockLow;
+use App\Exceptions\InsufficientStockException;
 use App\Filament\Resources\Shifts\ShiftResource;
+use App\Models\Branch;
 use App\Models\Category;
 use App\Models\Discount;
 use App\Models\Invoice;
@@ -24,6 +26,7 @@ use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class Pos extends Page
@@ -92,19 +95,31 @@ class Pos extends Page
 
     public function openShift(float $openingAmount): void
     {
-        if ($this->currentShift()) {
-            return;
-        }
-
         $user = auth()->user();
 
-        Shift::create([
-            'branch_id' => $user->branch_id,
-            'user_id' => $user->id,
-            'opening_amount' => round(max(0, $openingAmount), 2),
-            'opened_at' => now(),
-            'status' => 'open',
-        ]);
+        try {
+            DB::transaction(function () use ($user, $openingAmount) {
+                // Serialize openers per branch so two terminals cannot both
+                // create an open shift (P1-1). The partial unique index on
+                // shifts(branch_id) WHERE status='open' is the final backstop.
+                Branch::whereKey($user->branch_id)->lockForUpdate()->first();
+
+                if (Shift::where('branch_id', $user->branch_id)->where('status', 'open')->exists()) {
+                    return;
+                }
+
+                Shift::create([
+                    'branch_id' => $user->branch_id,
+                    'user_id' => $user->id,
+                    'opening_amount' => round(max(0, $openingAmount), 2),
+                    'opened_at' => now(),
+                    'status' => 'open',
+                ]);
+            });
+        } catch (QueryException) {
+            // Unique-violation race: another terminal opened in between.
+            // The winner keeps its shift; this opener is a no-op.
+        }
     }
 
     public function closeShift(float $closingAmount): mixed
@@ -298,7 +313,7 @@ class Pos extends Page
             $modifiers = $this->resolveValidModifiers($product, $line['modifiers'] ?? []);
             $modifiersTotal = $modifiers->sum(fn ($m) => $m->effectivePrice());
 
-            $qty = max(1, (int) ($line['qty'] ?? 1));
+            $qty = min(99, max(1, (int) ($line['qty'] ?? 1))); // cap absurd carts (P2); stock guard still applies
             $unitPrice = round((float) $product->base_price + (float) ($variant->additional_price ?? 0) + $modifiersTotal, 2);
             $lineTotal = round($unitPrice * $qty, 2);
             $subtotal += $lineTotal;
@@ -355,80 +370,106 @@ class Pos extends Page
             return;
         }
 
-        $invoice = DB::transaction(function () use ($user, $shift, $pricing, $paymentMethod) {
-            $invoice = Invoice::create([
-                'branch_id' => $user->branch_id,
-                'user_id' => $user->id,
-                'shift_id' => $shift->id,
-                'table_id' => null,
-                'status' => 'pending', // paid up front; kitchen lifecycle: pending → preparing → ready → completed
-                'subtotal' => $pricing['subtotal'],
-                'discount_total' => $pricing['discount_total'],
-                'tax_total' => $pricing['tax_total'],
-                'total' => $pricing['total'],
-            ]);
+        try {
+            $invoice = DB::transaction(function () use ($user, $shift, $pricing, $paymentMethod) {
+                // Serialize concurrent checkouts per product so the stock check
+                // and the decrement below stay atomic, then refuse to sell more
+                // than is on hand (P0-2). Postgres honours the row lock; sqlite
+                // ignores it, but the guard itself still applies in both.
+                $productIds = collect($pricing['lines'])->pluck('product.id')->unique()->values()->all();
+                if ($productIds !== []) {
+                    Product::whereIn('id', $productIds)->lockForUpdate()->get();
+                }
 
-            foreach ($pricing['lines'] as $line) {
-                $orderItem = OrderItem::create([
-                    'invoice_id' => $invoice->id,
-                    'product_id' => $line['product']->id,
-                    'product_variant_id' => $line['variant']?->id,
-                    'quantity' => $line['qty'],
-                    'price' => $line['unit_price'],
-                    'subtotal' => $line['line_total'],
-                    'status' => 'pending',
+                foreach ($pricing['lines'] as $line) {
+                    $onHand = StockTransaction::onHand($user->branch_id, $line['product']->id);
+                    if ($onHand < $line['qty']) {
+                        throw new InsufficientStockException($line['product']->name, $onHand, $line['qty']);
+                    }
+                }
+
+                $invoice = Invoice::create([
+                    'branch_id' => $user->branch_id,
+                    'user_id' => $user->id,
+                    'shift_id' => $shift->id,
+                    'table_id' => null,
+                    'status' => 'pending', // paid up front; kitchen lifecycle: pending → preparing → ready → completed
+                    'subtotal' => $pricing['subtotal'],
+                    'discount_total' => $pricing['discount_total'],
+                    'tax_total' => $pricing['tax_total'],
+                    'total' => $pricing['total'],
                 ]);
 
-                foreach ($line['modifiers'] as $modifier) {
-                    OrderItemModifier::create([
-                        'order_item_id' => $orderItem->id,
-                        'modifier_id' => $modifier->id,
-                        'name' => $modifier->name,
-                        'price' => $modifier->effectivePrice(),
+                foreach ($pricing['lines'] as $line) {
+                    $orderItem = OrderItem::create([
+                        'invoice_id' => $invoice->id,
+                        'product_id' => $line['product']->id,
+                        'product_variant_id' => $line['variant']?->id,
+                        'quantity' => $line['qty'],
+                        'price' => $line['unit_price'],
+                        'subtotal' => $line['line_total'],
+                        'status' => 'pending',
+                    ]);
+
+                    foreach ($line['modifiers'] as $modifier) {
+                        OrderItemModifier::create([
+                            'order_item_id' => $orderItem->id,
+                            'modifier_id' => $modifier->id,
+                            'name' => $modifier->name,
+                            'price' => $modifier->effectivePrice(),
+                        ]);
+                    }
+
+                    StockTransaction::create([
+                        'branch_id' => $user->branch_id,
+                        'product_id' => $line['product']->id,
+                        'product_variant_id' => $line['variant']?->id,
+                        'quantity' => -$line['qty'],
+                        'type' => 'sale',
+                        'reference_type' => Invoice::class,
+                        'reference_id' => $invoice->id,
                     ]);
                 }
 
-                StockTransaction::create([
-                    'branch_id' => $user->branch_id,
-                    'product_id' => $line['product']->id,
-                    'product_variant_id' => $line['variant']?->id,
-                    'quantity' => -$line['qty'],
-                    'type' => 'sale',
-                    'reference_type' => Invoice::class,
-                    'reference_id' => $invoice->id,
+                // Re-derive the same QR here (deterministic from account+amount)
+                // purely to capture its md5 for later Bakong reconciliation -
+                // the customer already scanned the one shown by generateKhqr().
+                $khqrMd5 = null;
+                if ($paymentMethod?->type === 'khqr' && $paymentMethod->account_details) {
+                    $khqr = app(KhqrService::class)->generateKhqr(
+                        bakongId: $paymentMethod->account_details,
+                        amount: $invoice->total,
+                        currency: $paymentMethod->currency ?? 'USD',
+                        merchantName: $user->company->name,
+                        city: 'Phnom Penh',
+                        merchantId: $paymentMethod->merchant_id,
+                        acquiringBank: $paymentMethod->acquiring_bank,
+                    );
+                    $khqrMd5 = $khqr['md5'] ?? null;
+                }
+
+                $payment = Payment::create([
+                    'invoice_id' => $invoice->id,
+                    'payment_method_id' => $paymentMethod?->id,
+                    'method' => $paymentMethod?->name ?? 'cash',
+                    'amount' => $invoice->total,
+                    'status' => 'successful',
+                    'khqr_md5' => $khqrMd5,
                 ]);
-            }
 
-            // Re-derive the same QR here (deterministic from account+amount)
-            // purely to capture its md5 for later Bakong reconciliation -
-            // the customer already scanned the one shown by generateKhqr().
-            $khqrMd5 = null;
-            if ($paymentMethod?->type === 'khqr' && $paymentMethod->account_details) {
-                $khqr = app(KhqrService::class)->generateKhqr(
-                    bakongId: $paymentMethod->account_details,
-                    amount: $invoice->total,
-                    currency: $paymentMethod->currency ?? 'USD',
-                    merchantName: $user->company->name,
-                    city: 'Phnom Penh',
-                    merchantId: $paymentMethod->merchant_id,
-                    acquiringBank: $paymentMethod->acquiring_bank,
-                );
-                $khqrMd5 = $khqr['md5'] ?? null;
-            }
+                $invoice->syncPaidStatus();
 
-            $payment = Payment::create([
-                'invoice_id' => $invoice->id,
-                'payment_method_id' => $paymentMethod?->id,
-                'method' => $paymentMethod?->name ?? 'cash',
-                'amount' => $invoice->total,
-                'status' => 'successful',
-                'khqr_md5' => $khqrMd5,
-            ]);
+                return [$invoice, $payment];
+            });
+        } catch (InsufficientStockException $e) {
+            Notification::make()
+                ->title('Insufficient stock')
+                ->body("{$e->productName} — only {$e->onHand} on hand, {$e->requested} requested.")
+                ->danger()
+                ->send();
 
-            $invoice->syncPaidStatus();
-
-            return [$invoice, $payment];
-        });
+            return;
+        }
 
         [$invoice, $payment] = $invoice;
 
@@ -450,7 +491,7 @@ class Pos extends Page
         // Alert managers when a sale pushes any product below the reorder level
         foreach (collect($pricing['lines'])->pluck('product')->unique('id') as $product) {
             $onHand = StockTransaction::onHand($user->branch_id, $product->id);
-            if ($onHand <= StockTransaction::LOW_STOCK_THRESHOLD) {
+            if ($onHand <= StockTransaction::lowStockThreshold()) {
                 event(new StockLow($product, $user->branch_id, $onHand));
             }
         }

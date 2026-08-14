@@ -48,4 +48,31 @@ class Shift extends Model
     {
         return $this->hasMany(Invoice::class);
     }
+
+    /**
+     * Successful revenue on this shift for a payment type (cash|card|khqr).
+     *
+     * Keyed on the linked PaymentMethod.type, NOT the free-text display
+     * `method` column: an operator may call a method "Bakong QR" or "ABA",
+     * which previously reconciled as zero (P0-1).
+     *
+     * Rows with no payment_method_id are cash by construction (both checkouts
+     * fall back to method='cash'), so they are included in the cash bucket.
+     */
+    public function revenueForPaymentType(string $type): float
+    {
+        return (float) Payment::query()
+            ->where('status', 'successful')
+            ->whereHas('invoice', fn ($q) => $q->where('shift_id', $this->id))
+            ->where(function ($q) use ($type) {
+                $q->whereHas('paymentMethod', fn ($m) => $m->where('type', $type));
+
+                if ($type === 'cash') {
+                    $q->orWhere(function ($legacy) {
+                        $legacy->whereNull('payment_method_id')->where('method', 'cash');
+                    });
+                }
+            })
+            ->sum('amount');
+    }
 }

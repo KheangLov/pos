@@ -2,7 +2,6 @@
 
 namespace App\Events;
 
-use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -25,8 +24,10 @@ class OrderCreated implements ShouldBroadcastNow
 
     public function broadcastOn(): array
     {
-        // Legacy public channel kept while older screens migrate to the private one
-        $channels = [new Channel('kds')];
+        // Private per-branch channel only; the old public 'kds' channel was
+        // removed (nothing subscribed to it, and it leaked order events to
+        // anyone listening).
+        $channels = [];
 
         if ($this->branchId !== null) {
             $channels[] = new PrivateChannel("branch.{$this->branchId}.kds");

@@ -5,6 +5,7 @@ namespace App\Livewire;
 use App\Events\OrderCreated;
 use App\Events\StockLow;
 use App\Events\TableStatusChanged;
+use App\Exceptions\InsufficientStockException;
 use App\Models\Category;
 use App\Models\Invoice;
 use App\Models\OrderItem;
@@ -49,7 +50,10 @@ class EMenu extends Component
 
     public function mount($uuid)
     {
+        // A deactivated floor plan takes its tables offline (P2): the table's
+        // QR resolves to 404 instead of serving an order form.
         $this->table = Table::where('uuid', $uuid)
+            ->whereHas('floorPlan', fn ($q) => $q->where('is_active', true))
             ->with('floorPlan.branch')
             ->firstOrFail();
     }
@@ -276,98 +280,127 @@ class EMenu extends Component
             ->where('is_active', true)
             ->value('rate') ?? 0);
 
-        $systemUserId = User::where('branch_id', $branchId)->value('id')
-            ?? User::where('company_id', $this->companyId)->value('id');
+        // Attribute to a stable branch system user (first created), not an
+        // arbitrary one (P2): eMenu has no guest auth.
+        $systemUserId = User::where('branch_id', $branchId)->orderBy('id')->value('id')
+            ?? User::where('company_id', $this->companyId)->orderBy('id')->value('id');
 
-        $invoice = DB::transaction(function () use ($branchId, $products, $taxRate, $systemUserId) {
-            $subtotal = 0.0;
-            $lines = [];
+        try {
+            $invoice = DB::transaction(function () use ($branchId, $products, $taxRate, $systemUserId) {
+                $subtotal = 0.0;
+                $lines = [];
 
-            foreach ($this->cart as $item) {
-                $product = $products->get($item['id']);
-                if (! $product) {
-                    continue;
+                foreach ($this->cart as $item) {
+                    $product = $products->get($item['id']);
+                    if (! $product) {
+                        continue;
+                    }
+
+                    $modifiers = $this->resolveValidModifiers($product, $item['modifiers'] ?? []);
+                    $modifiersTotal = $modifiers->sum(fn ($m) => $m->effectivePrice());
+
+                    $qty = min(99, max(1, (int) $item['quantity'])); // cap absurd carts (P2); stock guard still applies
+                    $unitPrice = round((float) $product->base_price + $modifiersTotal, 2);
+                    $lineTotal = round($unitPrice * $qty, 2);
+                    $subtotal += $lineTotal;
+
+                    $lines[] = ['product' => $product, 'modifiers' => $modifiers, 'qty' => $qty, 'unit_price' => $unitPrice, 'line_total' => $lineTotal];
                 }
 
-                $modifiers = $this->resolveValidModifiers($product, $item['modifiers'] ?? []);
-                $modifiersTotal = $modifiers->sum(fn ($m) => $m->effectivePrice());
+                if ($lines === []) {
+                    return null;
+                }
 
-                $qty = max(1, (int) $item['quantity']);
-                $unitPrice = round((float) $product->base_price + $modifiersTotal, 2);
-                $lineTotal = round($unitPrice * $qty, 2);
-                $subtotal += $lineTotal;
+                // Refuse to sell more than is on hand (P0-2). Locking the product
+                // rows serializes concurrent checkouts per product so the check
+                // and the decrement below stay atomic.
+                $productIds = collect($lines)->pluck('product.id')->unique()->values()->all();
+                if ($productIds !== []) {
+                    Product::whereIn('id', $productIds)->lockForUpdate()->get();
+                }
 
-                $lines[] = ['product' => $product, 'modifiers' => $modifiers, 'qty' => $qty, 'unit_price' => $unitPrice, 'line_total' => $lineTotal];
-            }
+                foreach ($lines as $line) {
+                    $onHand = StockTransaction::onHand($branchId, $line['product']->id);
+                    if ($onHand < $line['qty']) {
+                        throw new InsufficientStockException($line['product']->name, $onHand, $line['qty']);
+                    }
+                }
 
-            if ($lines === []) {
-                return null;
-            }
+                $taxTotal = round($subtotal * ($taxRate / 100), 2);
 
-            $taxTotal = round($subtotal * ($taxRate / 100), 2);
+                $invoice = Invoice::create([
+                    'branch_id' => $branchId,
+                    'user_id' => $systemUserId,
+                    'table_id' => $this->table->id,
+                    'status' => 'pending',
+                    'subtotal' => round($subtotal, 2),
+                    'discount_total' => 0,
+                    'tax_total' => $taxTotal,
+                    'total' => round($subtotal + $taxTotal, 2),
+                ]);
 
-            $invoice = Invoice::create([
-                'branch_id' => $branchId,
-                'user_id' => $systemUserId,
-                'table_id' => $this->table->id,
-                'status' => 'pending',
-                'subtotal' => round($subtotal, 2),
-                'discount_total' => 0,
-                'tax_total' => $taxTotal,
-                'total' => round($subtotal + $taxTotal, 2),
-            ]);
+                foreach ($lines as $line) {
+                    $orderItem = OrderItem::create([
+                        'invoice_id' => $invoice->id,
+                        'product_id' => $line['product']->id,
+                        'quantity' => $line['qty'],
+                        'price' => $line['unit_price'],
+                        'subtotal' => $line['line_total'],
+                        'status' => 'pending',
+                    ]);
 
-            foreach ($lines as $line) {
-                $orderItem = OrderItem::create([
+                    foreach ($line['modifiers'] as $modifier) {
+                        OrderItemModifier::create([
+                            'order_item_id' => $orderItem->id,
+                            'modifier_id' => $modifier->id,
+                            'name' => $modifier->name,
+                            'price' => $modifier->effectivePrice(),
+                        ]);
+                    }
+
+                    StockTransaction::create([
+                        'branch_id' => $branchId,
+                        'product_id' => $line['product']->id,
+                        'quantity' => -$line['qty'],
+                        'type' => 'sale',
+                        'reference_type' => Invoice::class,
+                        'reference_id' => $invoice->id,
+                    ]);
+                }
+
+                // First order on the table marks it occupied; later orders (the
+                // table is already occupied) must not flip it back (P1-6).
+                if ($this->table->status === 'available') {
+                    $this->table->update(['status' => 'occupied']);
+                }
+
+                // Always record the obligation on the table's invoice so the
+                // cashier can see it at the counter and settle it (P1-4): the
+                // selected method if one was picked, otherwise cash.
+                $method = $this->selectedPaymentMethod
+                    ? PaymentMethod::where('company_id', $this->companyId)
+                        ->where('is_active', true)
+                        ->where(function ($query) use ($branchId) {
+                            $query->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                        })
+                        ->find($this->selectedPaymentMethod)
+                    : null;
+
+                Payment::create([
                     'invoice_id' => $invoice->id,
-                    'product_id' => $line['product']->id,
-                    'quantity' => $line['qty'],
-                    'price' => $line['unit_price'],
-                    'subtotal' => $line['line_total'],
+                    'payment_method_id' => $method?->id,
+                    'method' => $method?->name ?? 'cash',
+                    'amount' => $invoice->total,
                     'status' => 'pending',
                 ]);
 
-                foreach ($line['modifiers'] as $modifier) {
-                    OrderItemModifier::create([
-                        'order_item_id' => $orderItem->id,
-                        'modifier_id' => $modifier->id,
-                        'name' => $modifier->name,
-                        'price' => $modifier->effectivePrice(),
-                    ]);
-                }
+                return $invoice;
+            });
+        } catch (InsufficientStockException $e) {
+            $this->addError('cart', "{$e->productName} — only {$e->onHand} on hand, {$e->requested} requested.");
 
-                StockTransaction::create([
-                    'branch_id' => $branchId,
-                    'product_id' => $line['product']->id,
-                    'quantity' => -$line['qty'],
-                    'type' => 'sale',
-                    'reference_type' => Invoice::class,
-                    'reference_id' => $invoice->id,
-                ]);
-            }
-
-            $this->table->update(['status' => 'occupied']);
-
-            if ($this->selectedPaymentMethod) {
-                $method = PaymentMethod::where('company_id', $this->companyId)
-                    ->where('is_active', true)
-                    ->where(function ($query) use ($branchId) {
-                        $query->whereNull('branch_id')->orWhere('branch_id', $branchId);
-                    })
-                    ->find($this->selectedPaymentMethod);
-                if ($method) {
-                    Payment::create([
-                        'invoice_id' => $invoice->id,
-                        'payment_method_id' => $method->id,
-                        'method' => $method->name,
-                        'amount' => $invoice->total,
-                        'status' => 'pending',
-                    ]);
-                }
-            }
-
-            return $invoice;
-        });
+            return;
+        }
 
         if (! $invoice) {
             return;
@@ -390,7 +423,7 @@ class EMenu extends Component
 
         foreach ($products as $product) {
             $onHand = StockTransaction::onHand($branchId, $product->id);
-            if ($onHand <= StockTransaction::LOW_STOCK_THRESHOLD) {
+            if ($onHand <= StockTransaction::lowStockThreshold()) {
                 event(new StockLow($product, $branchId, $onHand));
             }
         }
@@ -398,7 +431,7 @@ class EMenu extends Component
         $this->cart = [];
         $this->calculateTotal();
 
-        return redirect()->route('order.tracking', ['invoice' => $invoice->id]);
+        return redirect()->route('order.tracking', ['tableUuid' => $this->table->uuid, 'invoice' => $invoice->id]);
     }
 
     public function render()

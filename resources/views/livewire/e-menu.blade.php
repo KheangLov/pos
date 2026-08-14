@@ -155,6 +155,12 @@
                         </div>
                     </div>
 
+                    @error('cart')
+                        <div class="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                            {{ $message }}
+                        </div>
+                    @enderror
+
                     <button wire:click="checkout" wire:loading.attr="disabled" wire:target="checkout" class="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-bold py-3.5 px-4 rounded-2xl shadow-lg shadow-amber-600/20 transition-all flex justify-center items-center gap-2">
                         <span>Place Order</span>
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>

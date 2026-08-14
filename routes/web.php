@@ -11,7 +11,10 @@ Route::get('/', function () {
 
 Route::middleware('throttle:60,1')->group(function () {
     Route::get('/emenu/table/{uuid}', EMenu::class)->name('emenu.table');
-    Route::get('/emenu/order/{invoice}', OrderTracking::class)->name('order.tracking');
+
+    // Order tracking is gated behind the table's unguessable UUID so
+    // sequential invoice ids can't be walked (P1-2).
+    Route::get('/emenu/order/{tableUuid}/{invoice}', OrderTracking::class)->name('order.tracking');
 });
 
 Route::get('/invoices/{invoice}/receipt', function (Invoice $invoice) {

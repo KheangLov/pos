@@ -100,6 +100,22 @@ services:
             reverb:
                 condition: service_healthy
 
+    # Free + open source (Apache-2.0) Cloudflare quick tunnel: exposes the app
+    # — and Reverb through Caddy's /app path route above — on a random
+    # https://<id>.trycloudflare.com URL. No account, no domain, no open ports.
+    # The URL is printed to this service's logs at startup and changes on every
+    # restart: fine for demos/customer demos, NOT for printed QR codes (for
+    # those, upgrade to a named tunnel with a Cloudflare-connected domain).
+    # --no-tls-verify: Caddy presents the local dev cert (self-signed CA).
+    cloudflared:
+        image: 'cloudflare/cloudflared:latest'
+        command: ['tunnel', '--no-autoupdate', '--no-tls-verify', '--url', 'https://caddy:443']
+        networks:
+            - sail
+        restart: unless-stopped
+        depends_on:
+            - caddy
+
     queue:
         build:
             context: './vendor/laravel/sail/runtimes/8.5'

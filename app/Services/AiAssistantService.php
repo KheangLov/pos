@@ -155,7 +155,7 @@ class AiAssistantService
                         ->whereIn('branch_id', $branchIds)
                         ->selectRaw('product_id, SUM(quantity) as on_hand')
                         ->groupBy('product_id')
-                        ->havingRaw('SUM(quantity) <= ?', [StockTransaction::LOW_STOCK_THRESHOLD])
+                        ->havingRaw('SUM(quantity) <= ?', [StockTransaction::lowStockThreshold()])
                         ->pluck('on_hand', 'product_id');
 
                     $names = Product::query()

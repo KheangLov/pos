@@ -1,6 +1,8 @@
 <x-filament-panels::page>
     @vite(['resources/js/app.js'])
-    <div class="h-[calc(100vh-12rem)]" x-data="kdsBoard({{ $branchId }})" wire:key="kds-board">
+    {{-- wire:poll = polling fallback when Reverb is unreachable; Echo updates
+         still arrive instantly and the poll only re-renders (P2). --}}
+    <div class="h-[calc(100vh-12rem)]" x-data="kdsBoard({{ $branchId }})" wire:key="kds-board" wire:poll.15s>
 
         {{-- Connection banner --}}
         <div x-show="!connected" x-cloak

@@ -12,6 +12,16 @@ class StockTransaction extends Model
 {
     public const LOW_STOCK_THRESHOLD = 10;
 
+    /**
+     * Reorder threshold — now config-driven (config/pos.php, env
+     * LOW_STOCK_THRESHOLD). Kept as a method so callers don't touch the
+     * legacy const directly.
+     */
+    public static function lowStockThreshold(): int
+    {
+        return (int) config('pos.low_stock_threshold', self::LOW_STOCK_THRESHOLD);
+    }
+
     public static function onHand(int $branchId, int $productId): int
     {
         return (int) static::query()

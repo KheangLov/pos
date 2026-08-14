@@ -83,10 +83,19 @@ class Kds extends Page
 
         event(new OrderStatusUpdated($invoice));
 
-        // Serving the order frees the table
+        // Serving the order frees the table only when no other invoice is
+        // still open on it (P1-6): a table with two orders must stay occupied
+        // until the last one is completed.
         if ($status === 'completed' && $invoice->table) {
-            $invoice->table->update(['status' => 'available']);
-            event(new TableStatusChanged($invoice->table->fresh('floorPlan')));
+            $hasOtherOpenOrders = $invoice->table->invoices()
+                ->where('id', '!=', $invoice->id)
+                ->whereIn('status', ['pending', 'preparing', 'ready'])
+                ->exists();
+
+            if (! $hasOtherOpenOrders) {
+                $invoice->table->update(['status' => 'available']);
+                event(new TableStatusChanged($invoice->table->fresh('floorPlan')));
+            }
         }
     }
 }

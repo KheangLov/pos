@@ -12,9 +12,13 @@ class OrderTracking extends Component
 {
     public $invoice;
 
-    public function mount($invoice)
+    public function mount(string $tableUuid, int $invoice)
     {
-        $this->invoice = Invoice::with('orderItems.product', 'table', 'payments.paymentMethod')->findOrFail($invoice);
+        // The table UUID is the capability token: without it, sequential
+        // invoice ids are not enumerable (P1-2). A mismatch is a 404.
+        $this->invoice = Invoice::with('orderItems.product', 'table', 'payments.paymentMethod')
+            ->whereHas('table', fn ($q) => $q->where('uuid', $tableUuid))
+            ->findOrFail($invoice);
     }
 
     public function checkStatus()
@@ -61,7 +65,17 @@ class OrderTracking extends Component
             acquiringBank: $method->acquiring_bank,
         );
 
-        return $khqr ? $service->generateQrImage($khqr['qr']) : null;
+        if (! $khqr) {
+            return null;
+        }
+
+        // Remember the generated payload's md5 on the payment row so the
+        // khqr:check-pending job can poll Bakong for confirmation (P1-5).
+        if (! $pendingPayment->khqr_md5) {
+            $pendingPayment->forceFill(['khqr_md5' => $khqr['md5']])->save();
+        }
+
+        return $service->generateQrImage($khqr['qr']);
     }
 
     public function render()

@@ -6,7 +6,17 @@
 
 :443 {
 	tls /certs/server-cert.pem /certs/server-key.pem
-	reverse_proxy laravel.test:80
+
+	# Laravel Echo connects to wss://<host>/app - route Reverb's WebSocket
+	# endpoints here so a single origin (and a single tunnel hostname) serves
+	# both the app and its realtime layer. /app is the Pusher protocol path.
+	handle /app* {
+		reverse_proxy reverb:8080
+	}
+
+	handle {
+		reverse_proxy laravel.test:80
+	}
 }
 
 :8443 {
